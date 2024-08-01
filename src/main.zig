@@ -11,11 +11,26 @@ const log = std.log;
 
 const spoon = @import("spoon");
 
+// TODO should be an argument.
 var term: spoon.Term = undefined;
 var loop: bool = true;
 var buf: [32]u8 = undefined;
 var read: usize = undefined;
 var empty = true;
+
+// A single global allocator for now
+var gpa = heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
+const MTerm = struct {
+    pub fn init() !void {
+        try term.init(.{});
+    }
+
+    pub fn deinit() void {
+        term.deinit() catch {};
+    }
+};
 
 pub fn main() !void {
     var force_legacy: bool = false;
@@ -33,8 +48,10 @@ pub fn main() !void {
         }
     }
 
-    try term.init(.{});
-    defer term.deinit() catch {};
+    try MTerm.init();
+    defer MTerm.deinit();
+
+    // const handleSigWinch = HandleSigWinch.init(term);
 
     try posix.sigaction(posix.SIG.WINCH, &posix.Sigaction{
         .handler = .{ .handler = handleSigWinch },
@@ -199,6 +216,20 @@ fn render() !void {
         }
     }
 }
+
+// NOTE: run doesn't work sadly, it's treated as a field instead of a function
+// const HandleSigWinch = struct {
+//     term: MTerm,
+
+//     pub fn init(term: MTerm) HandleSigWinch {
+//         return HandleSigWinch{ .term = term };
+//     }
+
+//     pub fn run(self: HandleSigWinch, _: c_int) callconv(.C) void {
+//         self.term.fetchSize() catch {};
+//         render(self.term) catch {};
+//     }
+// };
 
 fn handleSigWinch(_: c_int) callconv(.C) void {
     term.fetchSize() catch {};
