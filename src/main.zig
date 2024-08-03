@@ -1,237 +1,223 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
 const std = @import("std");
-const mem = std.mem;
-const heap = std.heap;
-const posix = std.posix;
-const process = std.process;
-const unicode = std.unicode;
-const log = std.log;
+const vaxis = @import("vaxis");
+const Cell = vaxis.Cell;
+const TextInput = vaxis.widgets.TextInput;
+const border = vaxis.widgets.border;
 
-const spoon = @import("spoon");
+/// Set the default panic handler to vaxis panic_handler.
+/// This will clean up the terminal if any panics occur
+pub const panic = vaxis.panic_handler;
 
-// TODO should be an argument.
-var term: spoon.Term = undefined;
-var loop: bool = true;
-var buf: [32]u8 = undefined;
-var read: usize = undefined;
-var empty = true;
+/// Set some scope levels for the vaxis scopes
+pub const std_options: std.Options = .{
+    .log_scope_levels = &.{
+        .{ .scope = .vaxis, .level = .warn },
+        .{ .scope = .vaxis_parser, .level = .warn },
+    },
+};
 
-// A single global allocator for now
-var gpa = heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
+/// Tagged union of all events our application will handle. These can be generated
+/// by Vaxis or your own custom events
+const Event = union(enum) {
+    key_press: vaxis.Key,
+    key_release: vaxis.Key,
+    mouse: vaxis.Mouse,
+    focus_in, // window has gained focus
+    focus_out, // window has lost focus
+    paste_start, // bracketed paste start
+    paste_end, // bracketed paste end
+    paste: []const u8, // osc 52 paste, caller must free
+    color_report: vaxis.Color.Report, // osc 4, 10, 11, 12 response
+    color_scheme: vaxis.Color.Scheme, // light / dark OS theme changes
+    winsize: vaxis.Winsize, // window size has changed. Always sent when loop starts.
+};
 
-const MTerm = struct {
-    pub fn init() !void {
-        try term.init(.{});
+/// The application state
+const MyApp = struct {
+    allocator: std.mem.Allocator,
+    /// A flag for if we should quit
+    should_quit: bool,
+    /// The tty we are talking to
+    tty: vaxis.Tty,
+    /// The vaxis instance
+    vx: vaxis.Vaxis,
+    /// A mouse event that we will handle in the draw cycle
+    mouse: ?vaxis.Mouse,
+    /// Tracking the color
+    color_idx: u8 = 0,
+    /// The text input
+    text_input: TextInput,
+
+    pub fn init(allocator: std.mem.Allocator) !MyApp {
+        var vx = try vaxis.init(allocator, .{});
+        const text_input = TextInput.init(allocator, &vx.unicode);
+        return .{
+            .allocator = allocator,
+            .should_quit = false,
+            .tty = try vaxis.Tty.init(),
+            .vx = vx,
+            .mouse = null,
+            .text_input = text_input,
+        };
     }
 
-    pub fn deinit() void {
-        term.deinit() catch {};
+    pub fn deinit(self: *MyApp) void {
+        // Deinit takes an optional allocator. You can choose to pass an allocator
+        // to clean up memory, or pass null if your application is shutting down
+        // and let the OS clean up the memory
+        self.text_input.deinit();
+        self.vx.deinit(self.allocator, self.tty.anyWriter());
+        self.tty.deinit();
+    }
+
+    pub fn run(self: *MyApp) !void {
+        // Initialize the event loop. This particular loop requires intrusive init
+        var loop: vaxis.Loop(Event) = .{
+            .tty = &self.tty,
+            .vaxis = &self.vx,
+        };
+
+        try loop.init();
+
+        // Start the event loop. Events will now be queued
+        try loop.start();
+        defer loop.stop();
+
+        try self.vx.enterAltScreen(self.tty.anyWriter());
+
+        // Query the terminal to detect advanced features, such as kitty keyboard
+        // protocol, etc. This will automatically enable the features in the screen you are
+        // in, so you will want to call it after entering the alt screen if you are a full
+        // screen application. The second arg is a timeout for the terminal to send responses.
+        // Typically the response will be very fast, however it could be slow on ssh connections.
+        try self.vx.queryTerminal(self.tty.anyWriter(), 1 * std.time.ns_per_s);
+
+        // Enable mouse events
+        try self.vx.setMouseMode(self.tty.anyWriter(), true);
+
+        // This is the main event loop. The basic structure is
+        // 1. Handle events
+        // 2. Draw application
+        // 3. Render
+        while (!self.should_quit) {
+            // pollEvent blocks until we have an event
+            loop.pollEvent();
+            // tryEvent returns events until the queue is empty
+            while (loop.tryEvent()) |event| {
+                try self.update(event);
+            }
+
+            // Draw our application after handling events
+            self.draw();
+
+            // It's best to use a buffered writer for the render method. TTY provides one, but you
+            // may use your own. The provided bufferedWriter has a buffer size of 4096
+            var buffered = self.tty.bufferedWriter();
+            // Render the application on the screen
+            try self.vx.render(buffered.writer().any());
+            try buffered.flush();
+        }
+    }
+
+    /// Update our applciation state from an event
+    pub fn update(self: *MyApp, event: Event) !void {
+        switch (event) {
+            .key_press => |key| {
+                // key.matches does some basic matching algorithms. Key matching can be complex in
+                // the presence of kitty keyboard encodings, this will generally be a good approach.
+                // There are other matching functions available for specific purposes, as well
+                self.color_idx = switch (self.color_idx) {
+                    255 => 0,
+                    else => self.color_idx + 1,
+                };
+                if (key.matches('c', .{ .ctrl = true })) {
+                    self.should_quit = true;
+                } else if (key.matches('l', .{ .ctrl = true })) {
+                    self.vx.queueRefresh();
+                } else {
+                    try self.text_input.update(.{ .key_press = key });
+                }
+            },
+            .mouse => |mouse| self.mouse = mouse,
+            .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
+            else => {},
+        }
+    }
+
+    /// Draw our current state
+    pub fn draw(self: *MyApp) void {
+
+        // Window is a bounded area with a view to the screen. You cannot draw outside of a window's
+        // bounds. They are light structures, not intended to be stored.
+        const win = self.vx.window();
+
+        // Clearing the window has the effect of setting each cell to it's "default" state. Vaxis
+        // applications typicallyy will be immediate mode, and you will redraw your entire
+        // application during the draw cycle.
+        win.clear();
+
+        // In addition to clearing our window, we want to clear the mouse shape state since we may
+        // be changing that as well
+        self.vx.setMouseShape(.default);
+
+        // Create a style
+        const style: vaxis.Style = .{
+            .fg = .{ .index = self.color_idx },
+        };
+
+        // Create a bordered child window
+        const child = win.child(.{
+            .x_off = win.width / 2 - 20,
+            .y_off = win.height / 2 - 3,
+            .width = .{ .limit = 40 },
+            .height = .{ .limit = 3 },
+            .border = .{ .where = .all, .style = style },
+        });
+
+        // const child = win.child(.{
+        //     .x_off = (win.width / 2) - 7,
+        //     .y_off = win.height / 2 + 1,
+        //     .width = .{ .limit = msg.len },
+        //     .height = .{ .limit = 1 },
+        // });
+
+        // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
+        // determine if the event occurred in the target window. This method returns null if there
+        // is no mouse event, or if it occurred outside of the window
+        // const style: vaxis.Style = if (child.hasMouse(self.mouse)) |_| blk: {
+        //     // We handled the mouse event, so set it to null
+        //     self.mouse = null;
+        //     self.vx.setMouseShape(.pointer);
+        //     break :blk .{ .reverse = true };
+        // } else .{};
+
+        // Print a text segment to the screen. This is a helper function which iterates over the
+        // text field for graphemes. Alternatively, you can implement your own print functions and
+        // use the writeCell API.
+        // _ = try child.printSegment(.{ .text = msg, .style = style }, .{});
+
+        // Draw the text input in the child window
+        self.text_input.draw(child);
     }
 };
 
+/// Kepp our main function small. Typycally handling arg parsing and initialization only
 pub fn main() !void {
-    var force_legacy: bool = false;
-    var mouse: bool = false;
-    var it = process.ArgIteratorPosix.init();
-    _ = it.next();
-    while (it.next()) |arg| {
-        if (mem.eql(u8, arg, "--force-legacy")) {
-            force_legacy = true;
-        } else if (mem.eql(u8, arg, "--mouse")) {
-            mouse = true;
-        } else {
-            log.err("unknown option '{s}'", .{arg});
-            return;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        // fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) {
+            std.log.err("memory leak", .{});
         }
     }
 
-    try MTerm.init();
-    defer MTerm.deinit();
+    const allocator = gpa.allocator();
 
-    // const handleSigWinch = HandleSigWinch.init(term);
+    // Initialize our application
+    var app = try MyApp.init(allocator);
+    defer app.deinit();
 
-    try posix.sigaction(posix.SIG.WINCH, &posix.Sigaction{
-        .handler = .{ .handler = handleSigWinch },
-        .mask = posix.empty_sigset,
-        .flags = 0,
-    }, null);
-
-    var fds: [1]posix.pollfd = undefined;
-    fds[0] = .{
-        .fd = term.tty.?,
-        .events = posix.POLL.IN,
-        .revents = undefined,
-    };
-
-    try term.uncook(.{
-        .request_kitty_keyboard_protocol = !force_legacy,
-        .request_mouse_tracking = mouse,
-    });
-
-    try term.fetchSize();
-    try term.setWindowTitle("maurizio", .{});
-    try render();
-
-    while (loop) {
-        _ = try posix.poll(&fds, -1);
-
-        read = try term.readInput(&buf);
-        empty = false;
-        try render();
-    }
-}
-
-fn render() !void {
-    var rc = try term.getRenderContext();
-    defer rc.done() catch {};
-
-    try rc.clear();
-
-    try rc.moveCursorTo(0, 0);
-    try rc.setAttribute(.{ .fg = .green, .reverse = true });
-    var rpw = rc.restrictedPaddingWriter(term.width);
-    try rpw.writer().writeAll(" MAURIZIO");
-    try rpw.pad();
-
-    try rc.moveCursorTo(1, 0);
-    try rc.setAttribute(.{ .fg = .red, .bold = true });
-    rpw = rc.restrictedPaddingWriter(term.width);
-    try rpw.writer().writeAll(" Input demo / tester, q to exit.");
-    try rpw.finish();
-
-    try rc.moveCursorTo(3, 0);
-    try rc.setAttribute(.{ .bold = true });
-    if (empty) {
-        rpw = rc.restrictedPaddingWriter(term.width);
-        try rpw.writer().writeAll(" Press a key! Or try to paste something!");
-        try rpw.finish();
-    } else {
-        rpw = rc.restrictedPaddingWriter(term.width);
-        var writer = rpw.writer();
-        try writer.writeAll(" Bytes read:    ");
-        try rc.setAttribute(.{});
-        try writer.print("{}", .{read});
-        try rpw.finish();
-
-        var valid_unicode = true;
-        _ = unicode.Utf8View.init(buf[0..read]) catch {
-            valid_unicode = false;
-        };
-        try rc.moveCursorTo(4, 0);
-        try rc.setAttribute(.{ .bold = true });
-        rpw = rc.restrictedPaddingWriter(term.width);
-        writer = rpw.writer();
-        try writer.writeAll(" Valid unicode: ");
-        try rc.setAttribute(.{});
-        if (valid_unicode) {
-            try writer.writeAll("yes: \"");
-            for (buf[0..read]) |c| {
-                switch (c) {
-                    127 => try writer.writeAll("^H"),
-                    '\x1B' => try writer.writeAll("\\x1B"),
-                    '\t' => try writer.writeAll("\\t"),
-                    '\n' => try writer.writeAll("\\n"),
-                    '\r' => try writer.writeAll("\\r"),
-                    'a' & '\x1F' => try writer.writeAll("^a"),
-                    'b' & '\x1F' => try writer.writeAll("^b"),
-                    'c' & '\x1F' => try writer.writeAll("^c"),
-                    'd' & '\x1F' => try writer.writeAll("^d"),
-                    'e' & '\x1F' => try writer.writeAll("^e"),
-                    'f' & '\x1F' => try writer.writeAll("^f"),
-                    'g' & '\x1F' => try writer.writeAll("^g"),
-                    'h' & '\x1F' => try writer.writeAll("^h"),
-                    'k' & '\x1F' => try writer.writeAll("^k"),
-                    'l' & '\x1F' => try writer.writeAll("^l"),
-                    'n' & '\x1F' => try writer.writeAll("^n"),
-                    'o' & '\x1F' => try writer.writeAll("^o"),
-                    'p' & '\x1F' => try writer.writeAll("^p"),
-                    'q' & '\x1F' => try writer.writeAll("^q"),
-                    'r' & '\x1F' => try writer.writeAll("^r"),
-                    's' & '\x1F' => try writer.writeAll("^s"),
-                    't' & '\x1F' => try writer.writeAll("^t"),
-                    'u' & '\x1F' => try writer.writeAll("^u"),
-                    'v' & '\x1F' => try writer.writeAll("^v"),
-                    'w' & '\x1F' => try writer.writeAll("^w"),
-                    'x' & '\x1F' => try writer.writeAll("^x"),
-                    'y' & '\x1F' => try writer.writeAll("^y"),
-                    'z' & '\x1F' => try writer.writeAll("^z"),
-                    else => try writer.writeByte(c),
-                }
-            }
-            try writer.writeByte('"');
-        } else {
-            try writer.writeAll("no");
-        }
-        try rpw.finish();
-
-        var it = spoon.inputParser(buf[0..read]);
-        var i: usize = 1;
-        while (it.next()) |in| : (i += 1) {
-            rpw = rc.restrictedPaddingWriter(term.width);
-            writer = rpw.writer();
-
-            try rc.moveCursorTo(5 + (i - 1), 0);
-
-            const msg = " Input events:  ";
-            if (i == 1) {
-                try rc.setAttribute(.{ .bold = true });
-                try writer.writeAll(msg);
-                try rc.setAttribute(.{ .bold = false });
-            } else {
-                try writer.writeByteNTimes(' ', msg.len);
-            }
-
-            var mouse: ?struct { x: usize, y: usize } = null;
-
-            try writer.print("{}: ", .{i});
-            switch (in.content) {
-                .codepoint => |cp| {
-                    if (cp == 'q') {
-                        loop = false;
-                        return;
-                    }
-                    try writer.print("codepoint: {} x{X}", .{ cp, cp });
-                },
-                .function => |f| try writer.print("F{}", .{f}),
-                .mouse => |m| {
-                    mouse = .{ .x = m.x, .y = m.y };
-                    try writer.print("mouse {s} {} {}", .{ @tagName(m.button), m.x, m.y });
-                },
-                else => try writer.writeAll(@tagName(in.content)),
-            }
-            if (in.mod_alt) try writer.writeAll(" +Alt");
-            if (in.mod_ctrl) try writer.writeAll(" +Ctrl");
-            if (in.mod_super) try writer.writeAll(" +Super");
-
-            try rpw.finish();
-
-            if (mouse) |m| {
-                try rc.moveCursorTo(m.y, m.x);
-                try rc.setAttribute(.{ .bg = .red, .bold = true });
-                try rc.buffer.writer().writeByte('X');
-            }
-        }
-    }
-}
-
-// NOTE: run doesn't work sadly, it's treated as a field instead of a function
-// const HandleSigWinch = struct {
-//     term: MTerm,
-
-//     pub fn init(term: MTerm) HandleSigWinch {
-//         return HandleSigWinch{ .term = term };
-//     }
-
-//     pub fn run(self: HandleSigWinch, _: c_int) callconv(.C) void {
-//         self.term.fetchSize() catch {};
-//         render(self.term) catch {};
-//     }
-// };
-
-fn handleSigWinch(_: c_int) callconv(.C) void {
-    term.fetchSize() catch {};
-    render() catch {};
+    // Run the application
+    try app.run();
 }
