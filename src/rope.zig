@@ -1,5 +1,10 @@
 const std = @import("std");
 
+// TODO 1 I don't count hte wheights correctly
+// TODO 2 I should add a top node with just the left
+// TODO 3 insert sucks, I should look into an append to handle these things.
+// TODO 4 concat and memory management
+
 pub const RopeNode = union(enum) {
     node: Node,
     leaf: Leaf,
@@ -54,8 +59,12 @@ pub const Rope = struct {
             switch (node.*) {
                 .leaf => {},
                 .node => |n| {
-                    self.deinitNode(n.left);
-                    self.deinitNode(n.right);
+                    if (n.left) |left| {
+                        self.deinitNode(left);
+                    }
+                    if (n.right) |right| {
+                        self.deinitNode(right);
+                    }
                 },
             }
             self.allocator.destroy(node);
@@ -195,7 +204,7 @@ pub const Rope = struct {
         switch (node.*) {
             .leaf => |leaf| std.debug.print("({}) {s}\n", .{ leaf.len, leaf.substring }),
             .node => |n| {
-                std.debug.print("({}):", .{n.len});
+                std.debug.print("({}):\n", .{n.len});
                 if (n.left) |left| {
                     printSpaces(depth);
                     std.debug.print("L:\n", .{});
@@ -267,4 +276,32 @@ test "collect" {
     try rope.collect(&buffer2);
 
     try std.testing.expect(std.mem.eql(u8, buffer2.items, "Hello, Maurizio! You beautiful cat."));
+}
+
+test "foo" {
+    var rope = Rope.init(std.testing.allocator);
+    defer rope.deinit();
+
+    try rope.insert(0, "my_");
+    try rope.insert(0, "Hello_");
+
+    var rope2 = Rope.init(std.testing.allocator);
+    try rope2.insert(0, "me_");
+    try rope2.insert(0, "na");
+
+    var rope3 = Rope.init(std.testing.allocator);
+    try rope3.insert(0, "_Simon");
+    try rope3.insert(0, "s");
+
+    try rope.concat(rope2);
+    try rope.concat(rope3);
+    rope.print();
+
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+    try rope.collect(&buffer);
+
+    std.debug.print("{s}\n", .{buffer.items});
+
+    try std.testing.expect(1 == 1);
 }
