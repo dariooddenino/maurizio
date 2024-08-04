@@ -1,307 +1,372 @@
 const std = @import("std");
 
-// TODO 1 I don't count hte wheights correctly
-// TODO 2 I should add a top node with just the left
-// TODO 3 insert sucks, I should look into an append to handle these things.
-// TODO 4 concat and memory management
+// TODO move inside Node?
+const Branch = struct {
+    left: ?*Node,
+    right: ?*Node,
+    // Size of left subtree
+    size: usize,
 
-pub const RopeNode = union(enum) {
-    node: Node,
+    /// Get the value in a given range.
+    fn getValueRange(self: Branch, start: usize, end: usize) ?[]const u8 {
+        const len = end - start + 1;
+        if (len <= self.size)
+            return self.left.?.getValueRange(start, end);
+
+        const l = self.left.?.getValueRange(start, self.size - 1);
+        // const r = self.right.?.getValueRange(0, len - self.size - 1);
+
+        // TODO I need an allocator to combine these two...
+        return l;
+    }
+
+    /// Get the whole value of the Branch.
+    fn getValue(self: Branch) ?[]const u8 {
+        return self.getValueRange(0, self.size);
+    }
+};
+
+const Leaf = struct {
+    value: []const u8,
+    // Size of leaf
+    size: usize,
+
+    fn new(val: []const u8) Node {
+        return .{ .leaf = .{
+            .value = val,
+            .size = val.len,
+        } };
+    }
+
+    /// Get the value in a given range.
+    /// NOTE Not sure about the return type.
+    fn getValueRange(self: Leaf, start: usize, end: usize) ?[]const u8 {
+        const len = end - start + 1;
+        if (start < self.size and len <= self.size)
+            return self.value[start..len];
+
+        return null;
+    }
+
+    /// Get the whole value of the Leaf.
+    fn getValue(self: Leaf) ?[]const u8 {
+        return self.getValueRange(0, self.size - 1);
+    }
+};
+
+const Node = union(enum) {
+    branch: Branch,
     leaf: Leaf,
 
-    pub fn getLen(self: RopeNode) usize {
+    fn getValueRange(self: Node, start: usize, end: usize) ?[]const u8 {
         switch (self) {
-            inline else => |n| return n.len,
+            inline else => |node| return node.getValueRange(start, end),
         }
     }
 
-    fn collectNode(self: *RopeNode, buffer: *std.ArrayList(u8)) !void {
-        switch (self.*) {
+    fn getValue(self: Node) ?[]const u8 {
+        switch (self) {
+            inline else => |node| return node.getValue(),
+        }
+    }
+
+    fn getSize(self: Node) usize {
+        switch (self) {
+            inline else => |node| return node.size,
+        }
+    }
+
+    fn update(self: *Node) void {
+        self.size = self.left.?.getSize() + self.right.?.getSize() + 1;
+    }
+
+    // TODO this needs an allocator as well, I'll probably have to move these operations out of here
+    fn join(left: Node, right: Node) Node {
+        return Node{ .branch = Branch{
+            .left = left,
+            .right = right,
+            .size = left.getSize(),
+        } };
+    }
+
+    fn split(self: *Node, pos: usize) !struct { Node, Node } {
+        return switch (self.*) {
+            .branch => |branch| {
+                // We are splitting the left branch
+                if (pos < branch.size) {
+                    if (branch.left) |left| {
+                        const new_left, const new_right = try left.split(pos);
+                        // TODO r ropejoin new_right and self.right
+                        return .{ new_left, new_right };
+                    } else {
+                        return error.OutOfBounds;
+                    }
+                } else {
+                    if (branch.right) |right| {
+                        const new_left, const new_right = try right.split(pos - branch.size);
+                        // l ropejoin new_left self.right
+                        return .{ new_left, new_right };
+                    } else {
+                        return error.OutOfBounds;
+                    }
+                }
+            },
             .leaf => |leaf| {
-                try buffer.appendSlice(leaf.substring);
+                if (pos >= leaf.size)
+                    return error.OutOfBounds;
+
+                if (pos == 0)
+                    return .{ Leaf.new(""), Leaf.new(leaf.value) };
+
+                const left = leaf.value[0..pos];
+                const right = leaf.value[pos..];
+
+                return .{ Leaf.new(left), Leaf.new(right) };
             },
-            .node => |node| {
-                if (node.left) |left| {
-                    try left.collectNode(buffer);
-                }
-                if (node.right) |right| {
-                    try right.collectNode(buffer);
-                }
-            },
-        }
+        };
+    }
+
+    fn newLeaf(val: []const u8) Node {
+        return .{ .leaf = .{
+            .value = val,
+            .size = val.len,
+        } };
     }
 };
 
-pub const Node = struct {
-    left: ?*RopeNode,
-    right: ?*RopeNode,
-    len: usize = 0,
-};
+test "Node" {
+    // A Leaf reports its value
+    {
+        var leaf = Node.newLeaf("Hello");
 
-pub const Leaf = struct {
-    substring: []const u8,
-    len: usize = 0,
-};
+        try std.testing.expectEqualStrings("Hello", leaf.getValue() orelse unreachable);
+    }
+    // We can extract a substring from a string
+    {
+        var leaf = Node.newLeaf("Hello");
 
-pub const Rope = struct {
-    allocator: std.mem.Allocator,
-    rope: ?*RopeNode,
-
-    pub fn init(allocator: std.mem.Allocator) Rope {
-        return .{
-            .allocator = allocator,
-            .rope = null,
-        };
+        try std.testing.expectEqualStrings("ello", leaf.getValueRange(1, 5) orelse unreachable);
     }
 
-    pub fn deinitNode(self: *Rope, m_node: ?*RopeNode) void {
-        if (m_node) |node| {
-            switch (node.*) {
-                .leaf => {},
-                .node => |n| {
-                    if (n.left) |left| {
-                        self.deinitNode(left);
-                    }
-                    if (n.right) |right| {
-                        self.deinitNode(right);
-                    }
-                },
-            }
-            self.allocator.destroy(node);
-        }
+    // A Leaf splits correctly at index 0
+    {
+        var leaf: Node = Node.newLeaf("Hello");
+        const left, const right = try leaf.split(0);
+
+        try std.testing.expectEqualStrings("", left.leaf.value);
+        try std.testing.expectEqualStrings("Hello", right.leaf.value);
     }
+    // A Leaf splits correctly at the last position
+    {
+        var leaf: Node = Node.newLeaf("Hello");
+        const left, const right = try leaf.split(4);
 
-    pub fn deinit(self: *Rope) void {
-        self.deinitNode(self.rope);
+        try std.testing.expectEqualStrings("Hell", left.leaf.value);
+        try std.testing.expectEqualStrings("o", right.leaf.value);
     }
+    // We can join to Leaves into a Node and print the result
+    {
+        const leaf1: Node = Node.newLeaf("Hello");
+        const leaf2: Node = Node.newLeaf(", World!");
+        const node = Node.join(leaf1, leaf2);
 
-    /// Concatenate two ropes into a single one.
-    /// O(1) or O(log N) time to compute the root weight.
-    /// NOTE other must not be freed by the caller :/
-    pub fn concat(self: *Rope, other: Rope) !void {
-        const node = try self.allocator.create(RopeNode);
-
-        node.* = RopeNode{
-            .node = .{
-                .left = self.rope,
-                .right = other.rope,
-                .len = self.rope.?.getLen(),
-                // .len = self.rope.?.getLen() + other.rope.?.getLen(),
-            },
-        };
-
-        self.rope = node;
+        try std.testing.expectEqualStrings("Hello, World!", node.getValue() orelse unreachable);
     }
-
-    /// Returns the character at position i
-    /// O(log N)
-    fn indexNode(node: *RopeNode, i: usize) !u8 {
-        if (i < node.getLen()) {
-            switch (node.*) {
-                .leaf => |leaf| {
-                    return leaf.substring[i];
-                },
-                .node => |n| {
-                    if (n.left) |left| {
-                        return indexNode(left, i);
-                    } else {
-                        // TODO better
-                        std.debug.print("OUT OF NODE BOUNDS\n", .{});
-                        return error.OverFlow;
-                    }
-                },
-            }
-        } else {
-            switch (node.*) {
-                // TODO handle better
-                .leaf => |_| {
-                    std.debug.print("OUT OF LEAF BOUNDS\n", .{});
-                    return error.OverFlow;
-                },
-                .node => |n| {
-                    if (n.right) |right| {
-                        return indexNode(right, i - node.getLen());
-                    } else {
-                        // TODO better
-                        std.debug.print("OUT OF NODE BOUNDS\n", .{});
-                        return error.OverFlow;
-                    }
-                },
-            }
-        }
-    }
-
-    pub fn index(self: Rope, i: usize) !u8 {
-        if (self.rope) |node| {
-            return try indexNode(node, i);
-        } else {
-            // TODO something better here
-            std.debug.print("[EMPTY]\n", .{});
-            return error.OverFlow;
-        }
-    }
-
-    /// Collect the tree into a string (?)
-    pub fn collect(self: *Rope, buffer: *std.ArrayList(u8)) !void {
-        if (self.rope) |node| {
-            try node.collectNode(buffer);
-        } else {
-            return;
-        }
-    }
-
-    // EXAMPLE BELOW
-
-    fn newLeaf(self: *Rope, string: []const u8) !*RopeNode {
-        const leaf = try self.allocator.create(RopeNode);
-
-        leaf.* = RopeNode{
-            .leaf = .{
-                .substring = string,
-                .len = string.len,
-            },
-        };
-        // Pretty sure this is bad
-        return leaf;
-    }
-
-    fn newNode(self: *Rope, left: *RopeNode, right: *RopeNode, len: usize) !*RopeNode {
-        const node = try self.allocator.create(RopeNode);
-        node.* = RopeNode{
-            .node = .{
-                .left = left,
-                .right = right,
-                .len = len,
-            },
-        };
-
-        return node;
-    }
-
-    pub fn insert(self: *Rope, idx: usize, string: []const u8) !void {
-        // Todo, I want to split this to 128 max
-        const leaf = try self.newLeaf(string);
-
-        if (self.rope) |rope| {
-            if (idx == 0) {
-                const node = try self.newNode(leaf, rope, leaf.getLen());
-                self.rope = node;
-            }
-        } else {
-            self.rope = leaf;
-        }
-    }
-
-    fn printSpaces(depth: usize) void {
-        for (0..depth) |_| {
-            std.debug.print(" ", .{});
-        }
-    }
-
-    fn printNode(node: *RopeNode, depth: usize) void {
-        printSpaces(depth);
-
-        switch (node.*) {
-            .leaf => |leaf| std.debug.print("({}) {s}\n", .{ leaf.len, leaf.substring }),
-            .node => |n| {
-                std.debug.print("({}):\n", .{n.len});
-                if (n.left) |left| {
-                    printSpaces(depth);
-                    std.debug.print("L:\n", .{});
-                    printNode(left, depth + 1);
-                }
-
-                if (n.right) |right| {
-                    printSpaces(depth);
-                    std.debug.print("R:\n", .{});
-                    printNode(right, depth + 1);
-                }
-            },
-        }
-    }
-
-    pub fn print(self: Rope) void {
-        if (self.rope) |rope| {
-            printNode(rope, 0);
-        } else {
-            std.debug.print("[EMPTY]\n", .{});
-        }
-    }
-};
-
-test "index" {
-    var rope = Rope.init(std.testing.allocator);
-    defer rope.deinit();
-
-    try rope.insert(0, "Maurizio!");
-
-    const m = try rope.index(0);
-    try std.testing.expect(m == 'M');
 }
 
-test "concat" {
-    var rope2 = Rope.init(std.testing.allocator);
-    var rope1 = Rope.init(std.testing.allocator);
-    defer rope1.deinit();
+pub fn Rope() type {
+    return struct {
+        const Self = @This();
 
-    try rope1.insert(0, "Hello, ");
-    try rope2.insert(0, "Concatenated Maurizio!");
+        allocator: std.mem.Allocator,
+        root: ?*Node,
 
-    try rope1.concat(rope2);
+        /// Initialize an empty Rope.
+        pub fn init(allocator: std.mem.Allocator) Self {
+            return Self{
+                .allocator = allocator,
+                .root = null,
+            };
+        }
 
-    const c = try rope1.index(7);
+        /// Create a Rope from a Node.
+        /// NOTE I will have to think on how to deal memory here.
+        fn fromNode(allocator: std.mem.Allocator, node: *Node) !Self {
+            return Self{
+                .allocator = allocator,
+                .root = node,
+            };
+        }
 
-    try std.testing.expect('C' == c);
+        /// Create a Rope from a String.
+        /// NOTE Might need this for initial tests only
+        fn fromString(allocator: std.mem.Allocator, string: []const u8) !Self {
+            var rope = Self{
+                .allocator = allocator,
+                .root = null,
+            };
+
+            const leaf: *Node = try rope.newLeaf(string);
+            rope.root = leaf;
+
+            return rope;
+        }
+
+        /// Erase the element at the given position
+        // pub fn erase(self: *Self, pos: usize) !void {
+        //     if (pos >= self.size())
+        //         return error.OutOfBounds;
+
+        //     self.eraseRange(pos, 1);
+        // }
+
+        // pub fn eraseRange(self: *Self, pos: usize, cnt: usize) !void {
+        //     if (pos + cnt > self.getSize())
+        //         return error.OutOfBounds;
+
+        // }
+
+        pub fn deinit(self: *Self) void {
+            self.deinitNode(self.root);
+        }
+
+        /// Create a new Leaf for the Rope
+        fn newLeaf(self: Self, string: []const u8) !*Node {
+            const leaf = try self.allocator.create(Node);
+            leaf.* = Node{
+                .leaf = .{
+                    .value = string,
+                    .size = string.len,
+                },
+            };
+
+            return leaf;
+        }
+
+        /// Insert a string at a given position in the rope.
+        // pub fn insert(self: *Self, pos: usize, value: []const u8) !void {
+        //     if (pos > self.size()) {
+        //         // return en error
+        //         return error.OutOfBounds;
+        //     }
+
+        //     if (self.root) {
+        //         try insertInNode(self.root, pos, value);
+        //     }
+        // }
+
+        /// Insert a string in the Node at the given position.
+        // fn insertInNode(node: *Node, pos: usize, value: []const u8) !void {
+        //     const p = split(node, pos);
+        //     var left = p.left;
+        //     var right = p.right;
+        //     var new_node = createNode(value);
+        //     var left_merge_result = merge(left, new_node);
+        //     return merge(left_merge_result, right);
+        // }
+
+        /// Split a Rope at the given position.
+        /// NOTE Do I have to clean up here afterwards??
+        // fn split(self: *Self, pos: usize) !struct { Self, Self } {
+        //     const left, const right = try self.splitNode(self.root, pos);
+        //     // TODO Is this enough? Do I have to free something?
+        //     self.root = null;
+        //     const left_rope = try fromNode(self.allocator, left);
+        //     const right_rope = try fromNode(self.allocator, right);
+        //     return .{ left_rope, right_rope };
+        // }
+
+        /// Split a Node at the given position
+        /// NOTE also need to handle the result somehow
+        /// NOTE A bit awkward, maybe it should just have the allocator passed as an arg?
+        // fn splitNode(self: *Self, m_node: ?*Node, pos: usize) !struct { Node, Node } {
+        //     if (m_node) |node| {
+        //         switch (node.*) {
+        //             // We are splitting a leaf
+        //             .leaf => |leaf| {
+        //                 // Something went wrong here.
+        //                 // NOTE maybe handle in a more graceful way
+        //                 if (pos >= leaf.size) {
+        //                     return error.OutOfBounds;
+        //                 }
+        //             },
+        //             .branch => |branch| {
+        //                 const left_size = node.left.getSize();
+        //                 if (left_size >= pos) {} else {}
+        //             },
+        //         }
+        //         // const left_size = node.left.getSize();
+        //         // if (left_size >= pos) {
+        //         //     const p = splitNode(node.left, pos);
+        //         //     node.left = p.right;
+        //         //     node.update();
+        //         //     return .{ p.left, node };
+        //         // } else {
+        //         //     const p = splitNode(node.right, pos - left_size - 1);
+        //         //     node.right = p.left;
+        //         //     node.update();
+        //         //     return .{ node, p.right };
+        //         // }
+        //     }
+        // }
+
+        fn deinitNode(self: *Self, m_node: ?*Node) void {
+            if (m_node) |node| {
+                switch (node.*) {
+                    .leaf => {},
+                    .branch => |branch| {
+                        if (branch.left) |left| {
+                            self.deinitNode(left);
+                        }
+                        if (branch.right) |right| {
+                            self.deinitNode(right);
+                        }
+                    },
+                }
+                self.allocator.destroy(node);
+            }
+        }
+
+        /// Returns the size of the tree.
+        fn size(self: Self) usize {
+            return if (self.root) |node| node.getSize() else 0;
+        }
+
+        /// Sets the given node as the new root.
+        /// NOTE copying here, possible performance problem
+        fn setRoot(self: *Self, node: Node) void {
+            self.root.* = node;
+        }
+    };
 }
 
-test "collect" {
-    var rope = Rope.init(std.testing.allocator);
-    defer rope.deinit();
+test "rope" {
+    // Size of an empty Rope should be 0
+    {
+        var rope = Rope().init(std.testing.allocator);
+        defer rope.deinit();
 
-    try rope.insert(0, "Maurizio");
-    try rope.insert(0, "Hello, ");
-    var buffer = std.ArrayList(u8).init(std.testing.allocator);
-    defer buffer.deinit();
-    try rope.collect(&buffer);
+        try std.testing.expectEqual(@as(usize, 0), rope.size());
+    }
 
-    try std.testing.expect(std.mem.eql(u8, buffer.items, "Hello, Maurizio"));
+    // Create a Rope from a String, the size should be correct
+    {
+        var rope = try Rope().fromString(std.testing.allocator, "Maurizio");
+        defer rope.deinit();
 
-    var rope2 = Rope.init(std.testing.allocator);
-    try rope2.insert(0, "! You beautiful cat.");
+        try std.testing.expectEqual(@as(usize, 8), rope.size());
+    }
 
-    try rope.concat(rope2);
+    // Splitting a Rope should yield the correct result.
+    // {
+    //     var rope = try Rope().fromString(std.testing.allocator, "Maurizio");
+    //     defer rope.deinit();
 
-    var buffer2 = std.ArrayList(u8).init(std.testing.allocator);
-    defer buffer2.deinit();
-    try rope.collect(&buffer2);
+    //     var split_rope = try rope.split(2);
+    //     defer split_rope[0].deinit();
+    //     defer split_rope[1].deinit();
 
-    try std.testing.expect(std.mem.eql(u8, buffer2.items, "Hello, Maurizio! You beautiful cat."));
-}
-
-test "foo" {
-    var rope = Rope.init(std.testing.allocator);
-    defer rope.deinit();
-
-    try rope.insert(0, "my_");
-    try rope.insert(0, "Hello_");
-
-    var rope2 = Rope.init(std.testing.allocator);
-    try rope2.insert(0, "me_");
-    try rope2.insert(0, "na");
-
-    var rope3 = Rope.init(std.testing.allocator);
-    try rope3.insert(0, "_Simon");
-    try rope3.insert(0, "s");
-
-    try rope.concat(rope2);
-    try rope.concat(rope3);
-    rope.print();
-
-    var buffer = std.ArrayList(u8).init(std.testing.allocator);
-    defer buffer.deinit();
-    try rope.collect(&buffer);
-
-    std.debug.print("{s}\n", .{buffer.items});
-
-    try std.testing.expect(1 == 1);
+    //     try std.testing.expectEqual(@as(usize, 2), split_rope[0].size());
+    //     try std.testing.expectEqual(@as(usize, 6), split_rope[1].size());
+    // }
 }
