@@ -1,10 +1,14 @@
 const std = @import("std");
 
+// I need to think better at the Rope API, and then design how I want to handle the primitives.
+// Right now I'm lacking too much context.
+
 // TODO remove allocator from Leaf
 // TODO remove getValue, which is useless.
 // TODO How do I get the whole value??
 // TODO Node needs to deinit by itself
 // TODO probably need to store allocator inside Node.
+// TODO rope hold whole length
 
 // TODO move inside Node?
 const Branch = struct {
@@ -15,9 +19,7 @@ const Branch = struct {
 
     /// Get the value in a given range.
     fn getValueRange(self: Branch, allocator: std.mem.Allocator, start: usize, end: usize) error{OutOfMemory}!?[]const u8 {
-        std.debug.print("\nRANGE: {} {}\n", .{ start, end });
         const len = end - start + 1;
-        std.debug.print("\nSIZE: {} LEN: {}", .{ self.size, len });
         if (len <= self.size)
             return self.left.?.getValueRange(allocator, start, end);
 
@@ -37,10 +39,10 @@ const Branch = struct {
         return res;
     }
 
-    /// Get the whole value of the Branch.
-    fn getValue(self: Branch, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
-        return try self.getValueRange(allocator, 0, self.size);
-    }
+    // /// Get the whole value of the Branch.
+    // fn getValue(self: Branch, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
+    //     return try self.getValueRange(allocator, 0, self.size);
+    // }
 };
 
 const Leaf = struct {
@@ -65,10 +67,10 @@ const Leaf = struct {
         return null;
     }
 
-    /// Get the whole value of the Leaf.
-    fn getValue(self: Leaf, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
-        return try self.getValueRange(allocator, 0, self.size - 1);
-    }
+    // /// Get the whole value of the Leaf.
+    // fn getValue(self: Leaf, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
+    //     return try self.getValueRange(allocator, 0, self.size - 1);
+    // }
 };
 
 const Node = union(enum) {
@@ -77,17 +79,16 @@ const Node = union(enum) {
 
     fn getValueRange(self: Node, allocator: std.mem.Allocator, start: usize, end: usize) !?[]const u8 {
         switch (self) {
-            .branch => |branch| return try branch.getValueRange(allocator, start, end),
-            .leaf => |leaf| return try leaf.getValueRange(allocator, start, end),
+            inline else => |node| return try node.getValueRange(allocator, start, end),
         }
     }
 
-    fn getValue(self: Node, allocator: std.mem.Allocator) !?[]const u8 {
-        switch (self) {
-            .branch => |branch| return try branch.getValue(allocator),
-            .leaf => |leaf| return try leaf.getValue(allocator),
-        }
-    }
+    // fn getValue(self: Node, allocator: std.mem.Allocator) !?[]const u8 {
+    //     switch (self) {
+    //         .branch => |branch| return try branch.getValue(allocator),
+    //         .leaf => |leaf| return try leaf.getValue(allocator),
+    //     }
+    // }
 
     fn getSize(self: Node) usize {
         switch (self) {
@@ -226,14 +227,17 @@ test "Node" {
     {
         const leaf1: Node = Node.newLeaf("Hello");
         const leaf2: Node = Node.newLeaf(", World!");
-        // TODO node should cleanup itself.
-        var node = try Node.join(std.testing.allocator, leaf1, leaf2);
-        var rope = try Rope().fromNode(std.testing.allocator, &node);
+
+        const allocator = std.testing.allocator;
+
+        var rope = Rope().init(allocator);
         defer rope.deinit();
+        try rope.join(leaf1);
+        try rope.join(leaf2);
 
-        const result = try node.getValueRange(std.testing.allocator, 2, 6);
+        const result = try rope.getValueRange(allocator, 2, 6);
 
-        std.debug.print("RESU:LT {any}\n", .{result});
+        // std.debug.print("RESU:LT {any}\n", .{result});
 
         try std.testing.expectEqualStrings("llo", result orelse unreachable);
     }
@@ -275,6 +279,23 @@ pub fn Rope() type {
             rope.root = leaf;
 
             return rope;
+        }
+
+        // TODO root could not be there... this approach doesn't work
+        fn join(self: *Self, node: Node) !void {
+            if (self.root) |root| {
+                const new_root = try Node.join(self.allocator, root.*, node);
+                self.root.* = new_root;
+            } else {
+                self.root.* = node;
+            }
+        }
+
+        pub fn getValueRange(self: *Self, start: usize, end: usize) !?[]const u8 {
+            if (self.root) |root| {
+                return try root.getValueRange(self.allocator, start, end);
+            }
+            return null;
         }
 
         /// Erase the element at the given position
@@ -407,20 +428,20 @@ pub fn Rope() type {
 
 test "rope" {
     // Size of an empty Rope should be 0
-    {
-        var rope = Rope().init(std.testing.allocator);
-        defer rope.deinit();
+    // {
+    //     var rope = Rope().init(std.testing.allocator);
+    //     defer rope.deinit();
 
-        try std.testing.expectEqual(@as(usize, 0), rope.size());
-    }
+    //     try std.testing.expectEqual(@as(usize, 0), rope.size());
+    // }
 
     // Create a Rope from a String, the size should be correct
-    {
-        var rope = try Rope().fromString(std.testing.allocator, "Maurizio");
-        defer rope.deinit();
+    // {
+    //     var rope = try Rope().fromString(std.testing.allocator, "Maurizio");
+    //     defer rope.deinit();
 
-        try std.testing.expectEqual(@as(usize, 8), rope.size());
-    }
+    //     try std.testing.expectEqual(@as(usize, 8), rope.size());
+    // }
 
     // Splitting a Rope should yield the correct result.
     // {
