@@ -3,15 +3,14 @@ const node_dep = @import("node.zig");
 
 const Node = node_dep.Node;
 
+// TODO join is bugged
+// TODO get value should use empty strings?
+
 // I need to think better at the Rope API, and then design how I want to handle the primitives.
 // Right now I'm lacking too much context.
 
-// TODO remove allocator from Leaf
-// TODO remove getValue, which is useless.
-// TODO How do I get the whole value??
-// TODO Node needs to deinit by itself
-// TODO probably need to store allocator inside Node.
-// TODO rope hold whole length
+// TODO splitting doesn't work with pub, what can I do?
+// TODO How do I get the whole value?? (store rope whole length)
 
 pub fn Rope() type {
     return struct {
@@ -39,7 +38,7 @@ pub fn Rope() type {
 
         /// Create a Rope from a String.
         /// NOTE Might need this for initial tests only
-        fn fromString(allocator: std.mem.Allocator, string: []const u8) !Self {
+        pub fn fromString(allocator: std.mem.Allocator, string: []const u8) !Self {
             var rope = Self{
                 .allocator = allocator,
                 .root = null,
@@ -51,13 +50,20 @@ pub fn Rope() type {
             return rope;
         }
 
-        // TODO root could not be there... this approach doesn't work
-        fn join(self: *Self, node: Node) !void {
+        /// TODO for now this appends at the end only.
+        /// anything else is TBI
+        pub fn insert(self: *Self, string: []const u8, _: usize) !void {
+            const leaf: *Node = try self.newLeaf(string);
+            try self.join(leaf);
+        }
+
+        // TODO something funky going on here
+        pub fn join(self: *Self, node: *Node) !void {
             if (self.root) |root| {
-                const new_root = try Node.join(self.allocator, root.*, node);
-                self.root.* = new_root;
+                const new_root = try root.join(node);
+                self.root.?.* = new_root;
             } else {
-                self.root.* = node;
+                self.root = node;
             }
         }
 

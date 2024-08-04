@@ -28,11 +28,6 @@ const Branch = struct {
 
         return res;
     }
-
-    // /// Get the whole value of the Branch.
-    // fn getValue(self: Branch, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
-    //     return try self.getValueRange(allocator, 0, self.size);
-    // }
 };
 
 const Leaf = struct {
@@ -56,29 +51,17 @@ const Leaf = struct {
 
         return null;
     }
-
-    // /// Get the whole value of the Leaf.
-    // fn getValue(self: Leaf, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
-    //     return try self.getValueRange(allocator, 0, self.size - 1);
-    // }
 };
 
-const Node = union(enum) {
+pub const Node = union(enum) {
     branch: Branch,
     leaf: Leaf,
 
-    fn getValueRange(self: Node, allocator: std.mem.Allocator, start: usize, end: usize) !?[]const u8 {
+    pub fn getValueRange(self: Node, allocator: std.mem.Allocator, start: usize, end: usize) !?[]const u8 {
         switch (self) {
             inline else => |node| return try node.getValueRange(allocator, start, end),
         }
     }
-
-    // fn getValue(self: Node, allocator: std.mem.Allocator) !?[]const u8 {
-    //     switch (self) {
-    //         .branch => |branch| return try branch.getValue(allocator),
-    //         .leaf => |leaf| return try leaf.getValue(allocator),
-    //     }
-    // }
 
     fn getSize(self: Node) usize {
         switch (self) {
@@ -90,18 +73,11 @@ const Node = union(enum) {
         self.size = self.left.?.getSize() + self.right.?.getSize() + 1;
     }
 
-    // TODO this needs an allocator as well, I'll probably have to move these operations out of here
-    fn join(allocator: std.mem.Allocator, left: Node, right: Node) !Node {
-        const left_node = try allocator.create(Node);
-        const right_node = try allocator.create(Node);
-
-        left_node.* = left;
-        right_node.* = right;
-
+    pub fn join(self: *Node, other: *Node) !Node {
         return Node{ .branch = Branch{
-            .left = left_node,
-            .right = right_node,
-            .size = left.getSize(),
+            .left = self,
+            .right = other,
+            .size = self.getSize(),
         } };
     }
 
@@ -213,21 +189,17 @@ test "Node" {
     //     try std.testing.expectEqualStrings("o", right.leaf.value);
     // }
     // We can join to Leaves into a Node and print the result
-    // {
-    //     const leaf1: Node = Node.newLeaf("Hello");
-    //     const leaf2: Node = Node.newLeaf(", World!");
+    {
+        const allocator = std.testing.allocator;
 
-    //     const allocator = std.testing.allocator;
+        var rope = try Rope().fromString(allocator, "Hello!");
+        defer rope.deinit();
+        try rope.insert(", World!", 0);
 
-    //     var rope = Rope().init(allocator);
-    //     defer rope.deinit();
-    //     try rope.join(leaf1);
-    //     try rope.join(leaf2);
+        const result = try rope.getValueRange(2, 6);
 
-    //     const result = try rope.getValueRange(allocator, 2, 6);
+        // std.debug.print("\nRESULT: {s}\n", .{@as([]const u8, result orelse unreachable)});
 
-    //     // std.debug.print("RESU:LT {any}\n", .{result});
-
-    //     try std.testing.expectEqualStrings("llo", result orelse unreachable);
-    // }
+        try std.testing.expectEqualStrings("llo", result orelse unreachable);
+    }
 }
