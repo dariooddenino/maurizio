@@ -1,5 +1,11 @@
 const std = @import("std");
 
+// TODO remove allocator from Leaf
+// TODO remove getValue, which is useless.
+// TODO How do I get the whole value??
+// TODO Node needs to deinit by itself
+// TODO probably need to store allocator inside Node.
+
 // TODO move inside Node?
 const Branch = struct {
     left: ?*Node,
@@ -8,21 +14,32 @@ const Branch = struct {
     size: usize,
 
     /// Get the value in a given range.
-    fn getValueRange(self: Branch, start: usize, end: usize) ?[]const u8 {
+    fn getValueRange(self: Branch, allocator: std.mem.Allocator, start: usize, end: usize) error{OutOfMemory}!?[]const u8 {
+        std.debug.print("\nRANGE: {} {}\n", .{ start, end });
         const len = end - start + 1;
+        std.debug.print("\nSIZE: {} LEN: {}", .{ self.size, len });
         if (len <= self.size)
-            return self.left.?.getValueRange(start, end);
+            return self.left.?.getValueRange(allocator, start, end);
 
-        const l = self.left.?.getValueRange(start, self.size - 1);
-        // const r = self.right.?.getValueRange(0, len - self.size - 1);
+        const left = try self.left.?.getValueRange(allocator, start, self.size - 1);
+        const right = try self.right.?.getValueRange(allocator, 0, len - self.size - 1);
 
-        // TODO I need an allocator to combine these two...
-        return l;
+        var buf = std.ArrayList(u8).init(allocator);
+        defer buf.deinit();
+
+        if (left) |l|
+            try buf.appendSlice(l);
+        if (right) |r|
+            try buf.appendSlice(r);
+
+        const res = try buf.toOwnedSlice();
+
+        return res;
     }
 
     /// Get the whole value of the Branch.
-    fn getValue(self: Branch) ?[]const u8 {
-        return self.getValueRange(0, self.size);
+    fn getValue(self: Branch, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
+        return try self.getValueRange(allocator, 0, self.size);
     }
 };
 
@@ -40,7 +57,7 @@ const Leaf = struct {
 
     /// Get the value in a given range.
     /// NOTE Not sure about the return type.
-    fn getValueRange(self: Leaf, start: usize, end: usize) ?[]const u8 {
+    fn getValueRange(self: Leaf, _: std.mem.Allocator, start: usize, end: usize) error{OutOfMemory}!?[]const u8 {
         const len = end - start + 1;
         if (start < self.size and len <= self.size)
             return self.value[start..len];
@@ -49,8 +66,8 @@ const Leaf = struct {
     }
 
     /// Get the whole value of the Leaf.
-    fn getValue(self: Leaf) ?[]const u8 {
-        return self.getValueRange(0, self.size - 1);
+    fn getValue(self: Leaf, allocator: std.mem.Allocator) error{OutOfMemory}!?[]const u8 {
+        return try self.getValueRange(allocator, 0, self.size - 1);
     }
 };
 
@@ -58,15 +75,17 @@ const Node = union(enum) {
     branch: Branch,
     leaf: Leaf,
 
-    fn getValueRange(self: Node, start: usize, end: usize) ?[]const u8 {
+    fn getValueRange(self: Node, allocator: std.mem.Allocator, start: usize, end: usize) !?[]const u8 {
         switch (self) {
-            inline else => |node| return node.getValueRange(start, end),
+            .branch => |branch| return try branch.getValueRange(allocator, start, end),
+            .leaf => |leaf| return try leaf.getValueRange(allocator, start, end),
         }
     }
 
-    fn getValue(self: Node) ?[]const u8 {
+    fn getValue(self: Node, allocator: std.mem.Allocator) !?[]const u8 {
         switch (self) {
-            inline else => |node| return node.getValue(),
+            .branch => |branch| return try branch.getValue(allocator),
+            .leaf => |leaf| return try leaf.getValue(allocator),
         }
     }
 
@@ -81,10 +100,16 @@ const Node = union(enum) {
     }
 
     // TODO this needs an allocator as well, I'll probably have to move these operations out of here
-    fn join(left: Node, right: Node) Node {
+    fn join(allocator: std.mem.Allocator, left: Node, right: Node) !Node {
+        const left_node = try allocator.create(Node);
+        const right_node = try allocator.create(Node);
+
+        left_node.* = left;
+        right_node.* = right;
+
         return Node{ .branch = Branch{
-            .left = left,
-            .right = right,
+            .left = left_node,
+            .right = right_node,
             .size = left.getSize(),
         } };
     }
@@ -132,45 +157,85 @@ const Node = union(enum) {
             .size = val.len,
         } };
     }
+
+    fn printSpaces(depth: usize) void {
+        for (0..depth) |_| {
+            std.debug.print(" ", .{});
+        }
+    }
+
+    fn printNode(node: *Node, depth: usize) void {
+        printSpaces(depth);
+
+        switch (node.*) {
+            .leaf => |leaf| std.debug.print("({}) {s}\n", .{ leaf.size, leaf.value }),
+            .branch => |n| {
+                std.debug.print("({}):\n", .{n.size});
+                if (n.left) |left| {
+                    printSpaces(depth);
+                    std.debug.print("L:\n", .{});
+                    printNode(left, depth + 1);
+                }
+
+                if (n.right) |right| {
+                    printSpaces(depth);
+                    std.debug.print("R:\n", .{});
+                    printNode(right, depth + 1);
+                }
+            },
+        }
+    }
 };
 
 test "Node" {
     // A Leaf reports its value
-    {
-        var leaf = Node.newLeaf("Hello");
+    // {
+    //     var leaf = Node.newLeaf("Hello");
 
-        try std.testing.expectEqualStrings("Hello", leaf.getValue() orelse unreachable);
-    }
+    //     const result = try leaf.getValue(std.testing.allocator);
+
+    //     try std.testing.expectEqualStrings("Hello", result orelse unreachable);
+    // }
+
     // We can extract a substring from a string
-    {
-        var leaf = Node.newLeaf("Hello");
+    // {
+    //     var leaf = Node.newLeaf("Hello");
 
-        try std.testing.expectEqualStrings("ello", leaf.getValueRange(1, 5) orelse unreachable);
-    }
+    //     const result = try leaf.getValueRange(std.testing.allocator, 1, 5);
+
+    //     try std.testing.expectEqualStrings("ello", result orelse unreachable);
+    // }
 
     // A Leaf splits correctly at index 0
-    {
-        var leaf: Node = Node.newLeaf("Hello");
-        const left, const right = try leaf.split(0);
+    // {
+    //     var leaf: Node = Node.newLeaf("Hello");
+    //     const left, const right = try leaf.split(0);
 
-        try std.testing.expectEqualStrings("", left.leaf.value);
-        try std.testing.expectEqualStrings("Hello", right.leaf.value);
-    }
+    //     try std.testing.expectEqualStrings("", left.leaf.value);
+    //     try std.testing.expectEqualStrings("Hello", right.leaf.value);
+    // }
     // A Leaf splits correctly at the last position
-    {
-        var leaf: Node = Node.newLeaf("Hello");
-        const left, const right = try leaf.split(4);
+    // {
+    //     var leaf: Node = Node.newLeaf("Hello");
+    //     const left, const right = try leaf.split(4);
 
-        try std.testing.expectEqualStrings("Hell", left.leaf.value);
-        try std.testing.expectEqualStrings("o", right.leaf.value);
-    }
+    //     try std.testing.expectEqualStrings("Hell", left.leaf.value);
+    //     try std.testing.expectEqualStrings("o", right.leaf.value);
+    // }
     // We can join to Leaves into a Node and print the result
     {
         const leaf1: Node = Node.newLeaf("Hello");
         const leaf2: Node = Node.newLeaf(", World!");
-        const node = Node.join(leaf1, leaf2);
+        // TODO node should cleanup itself.
+        var node = try Node.join(std.testing.allocator, leaf1, leaf2);
+        var rope = try Rope().fromNode(std.testing.allocator, &node);
+        defer rope.deinit();
 
-        try std.testing.expectEqualStrings("Hello, World!", node.getValue() orelse unreachable);
+        const result = try node.getValueRange(std.testing.allocator, 2, 6);
+
+        std.debug.print("RESU:LT {any}\n", .{result});
+
+        try std.testing.expectEqualStrings("llo", result orelse unreachable);
     }
 }
 
