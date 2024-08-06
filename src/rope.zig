@@ -5,14 +5,11 @@ const Node = node_dep.Node;
 const Branch = node_dep.Branch;
 const Leaf = node_dep.Leaf;
 
-// TODO split has a couple of bugs.
-// TODO insert at any position
+// TODO I have a memory leak triggered by the last test only
+// TODO possibly node.join should accept a *Node
+
 // TODO how much should be in Rope and how much in the single nodes?
 // TODO splitting the modules doesn't work with pub, what can I do?
-// TODO I think that with the right algorithm I don't need to keep both size and full_size.
-
-// I need to think better at the Rope API, and then design how I want to handle the primitives.
-// Right now I'm lacking too much context.
 
 pub fn Rope() type {
     return struct {
@@ -46,7 +43,9 @@ pub fn Rope() type {
                 .root = null,
             };
 
-            const leaf: *Node = try rope.newLeaf(string);
+            const leaf = try allocator.create(Node);
+            leaf.* = Node.newLeaf(string);
+
             rope.root = leaf;
 
             return rope;
@@ -54,39 +53,48 @@ pub fn Rope() type {
 
         /// Insert a string at the given position in the Rope.
         pub fn insert(self: *Self, string: []const u8, pos: usize) !void {
-            const leaf: *Node = try self.newLeaf(string);
+            // const leaf: *Node = try self.newLeaf(string);
             if (self.root) |root| {
-                const left, const right = try root.split(pos);
+                const left, const right = try root.split(self.allocator, pos);
 
-                var left_node = try self.allocator.create(Node);
-                const right_node = try self.allocator.create(Node);
-                left_node.* = left;
-                right_node.* = right;
+                // var left_node = try self.allocator.create(Node);
+                // const right_node = try self.allocator.create(Node);
+                // left_node.* = left;
+                // right_node.* = right;
 
-                var tmp = try left_node.join(leaf);
-                var res = try Node.join(&tmp, right_node);
+                // TODO Might have to change the order here
+                try left.join(self.allocator, Node.newLeaf(string));
+                try left.join(self.allocator, right.*);
+
+                // var tmp = try left.join(self.allocator, Node.newLeaf(string));
+                // var res = try tmp.join(self.allocator, right);
+                // var res = try Node.join(&tmp, right_node);
                 // const new_root = try self.allocator.create(Node);
                 // new_root.* = res;
 
-                Node.printNode(&res, 0);
-                self.allocator.destroy(left_node);
-                self.allocator.destroy(right_node);
+                // self.allocator.destroy(left_node);
+                // self.allocator.destroy(right_node);
                 // self.root = new_root;
                 // self.root.?.* = res;
-                self.root = null;
+                self.root = left;
             } else {
+                const leaf = try self.allocator.create(Node);
+                leaf.* = Node.newLeaf(string);
                 self.root = leaf;
             }
         }
 
         /// Joins the root Node with a new Node
-        pub fn join(self: *Self, node: *Node) !void {
+        pub fn join(self: *Self, node: Node) !void {
             if (self.root) |root| {
-                const new_root = try self.allocator.create(Node);
-                new_root.* = try root.join(node);
-                self.root = new_root;
+                try root.join(self.allocator, node);
+                // const new_root = try self.allocator.create(Node);
+                // new_root.* = try root.join(node);
+                // self.root = new_root;
             } else {
-                self.root = node;
+                const new_root = try self.allocator.create(Node);
+                new_root.* = node;
+                self.root = new_root;
             }
         }
 
@@ -125,7 +133,7 @@ pub fn Rope() type {
         /// Gets the whole Rope value
         pub fn getValue(self: *Self) ![]const u8 {
             if (self.root) |root| {
-                return try self.getValueRange(0, root.getFullSize() - 1);
+                return try self.getValueRange(0, root.getFullSize());
             }
             return "";
         }
@@ -149,11 +157,11 @@ pub fn Rope() type {
         }
 
         /// Create a new Leaf for the Rope
-        pub fn newLeaf(self: Self, string: []const u8) !*Node {
-            const leaf = try self.allocator.create(Node);
-            leaf.* = Leaf.new(string);
-            return leaf;
-        }
+        // pub fn newLeaf(self: Self, string: []const u8) !*Node {
+        //     const leaf = try self.allocator.create(Node);
+        //     leaf.* = Leaf.new(string);
+        //     return leaf;
+        // }
 
         /// Insert a string at a given position in the rope.
         // pub fn insert(self: *Self, pos: usize, value: []const u8) !void {
