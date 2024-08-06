@@ -2,15 +2,17 @@ const std = @import("std");
 const node_dep = @import("node.zig");
 
 const Node = node_dep.Node;
+const Branch = node_dep.Branch;
+const Leaf = node_dep.Leaf;
 
-// TODO join is bugged
-// TODO get value should use empty strings?
+// TODO split has a couple of bugs.
+// TODO insert at any position
+// TODO how much should be in Rope and how much in the single nodes?
+// TODO splitting the modules doesn't work with pub, what can I do?
+// TODO I think that with the right algorithm I don't need to keep both size and full_size.
 
 // I need to think better at the Rope API, and then design how I want to handle the primitives.
 // Right now I'm lacking too much context.
-
-// TODO splitting doesn't work with pub, what can I do?
-// TODO How do I get the whole value?? (store rope whole length)
 
 pub fn Rope() type {
     return struct {
@@ -50,28 +52,80 @@ pub fn Rope() type {
             return rope;
         }
 
-        /// TODO for now this appends at the end only.
-        /// anything else is TBI
-        pub fn insert(self: *Self, string: []const u8, _: usize) !void {
+        /// Insert a string at the given position in the Rope.
+        /// TODO this and split are not modeled correctly.
+        /// I'm getting a double free error, because I don't have a clear model of this.
+        pub fn insert(self: *Self, string: []const u8, pos: usize) !void {
             const leaf: *Node = try self.newLeaf(string);
+            if (self.root) |root| {
+                // std.debug.print("WE HAVE ROOT {}\n", .{root});
+                const left, const right = try root.split(pos);
+                var left_node = try self.allocator.create(Node);
+                const right_node = try self.allocator.create(Node);
+                // std.debug.print("LEFt {}\n", .{left});
+                // std.debug.print("Right {}\n", .{right});
+                left_node.* = left;
+                right_node.* = right;
+                var tmp = try left_node.join(leaf);
+                const res = try Node.join(&tmp, right_node);
+                const new_root = try self.allocator.create(Node);
+                new_root.* = res;
+                self.root = new_root;
+            } else {
+                self.root = leaf;
+            }
             try self.join(leaf);
         }
 
-        // TODO something funky going on here
+        /// Joins the root Node with a new Node
         pub fn join(self: *Self, node: *Node) !void {
             if (self.root) |root| {
-                const new_root = try root.join(node);
-                self.root.?.* = new_root;
+                const new_root = try self.allocator.create(Node);
+                new_root.* = try root.join(node);
+                self.root = new_root;
             } else {
                 self.root = node;
             }
         }
 
-        pub fn getValueRange(self: *Self, start: usize, end: usize) !?[]const u8 {
+        /// Split a Rope. TODO Not sure if and how will use this yet.
+        /// I will get back to it.
+        pub fn split(self: *Self, pos: usize) struct { Self, Self } {
             if (self.root) |root| {
-                return try root.getValueRange(self.allocator, start, end);
+                const left, const right = try root.split(pos);
+                const left_node = self.allocator.create(Node);
+                const right_node = self.allocator.create(Node);
+                left_node.* = left;
+                right_node.* = right;
+                return .{
+                    Self.fromNode(self.allocator, left_node),
+                    Self.fromNode(self.allocator, right_node),
+                };
             }
-            return null;
+            // TODO what if the root is missing?
+            unreachable;
+        }
+
+        // Gets the Rope value in a range.
+        // Caller is responsible for freeing the result.
+        // TODO How can I improve this?
+        pub fn getValueRange(self: *Self, start: usize, end: usize) ![]const u8 {
+            if (self.root) |root| {
+                var buffer = std.ArrayList(u8).init(self.allocator);
+                defer buffer.deinit();
+                try root.getValueRange(&buffer, start, end);
+                const result = try buffer.toOwnedSlice();
+                return result;
+            }
+            return "";
+        }
+
+        /// Gets the whole Rope value
+        pub fn getValue(self: *Self) ![]const u8 {
+            if (self.root) |root| {
+                return try self.getValueRange(0, root.getFullSize() - 1);
+            }
+            return "";
         }
 
         /// Erase the element at the given position
@@ -93,15 +147,9 @@ pub fn Rope() type {
         }
 
         /// Create a new Leaf for the Rope
-        fn newLeaf(self: Self, string: []const u8) !*Node {
+        pub fn newLeaf(self: Self, string: []const u8) !*Node {
             const leaf = try self.allocator.create(Node);
-            leaf.* = Node{
-                .leaf = .{
-                    .value = string,
-                    .size = string.len,
-                },
-            };
-
+            leaf.* = Leaf.new(string);
             return leaf;
         }
 
@@ -196,8 +244,16 @@ pub fn Rope() type {
 
         /// Sets the given node as the new root.
         /// NOTE copying here, possible performance problem
-        fn setRoot(self: *Self, node: Node) void {
-            self.root.* = node;
+        // fn setRoot(self: *Self, node: Node) void {
+        //     self.root.* = node;
+        // }
+
+        pub fn print(self: Self) void {
+            if (self.root) |root| {
+                root.printNode(0);
+            } else {
+                std.debug.print("[EMPTY]\n", .{});
+            }
         }
     };
 }
