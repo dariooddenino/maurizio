@@ -53,28 +53,30 @@ pub fn Rope() type {
         }
 
         /// Insert a string at the given position in the Rope.
-        /// TODO this and split are not modeled correctly.
-        /// I'm getting a double free error, because I don't have a clear model of this.
         pub fn insert(self: *Self, string: []const u8, pos: usize) !void {
             const leaf: *Node = try self.newLeaf(string);
             if (self.root) |root| {
-                // std.debug.print("WE HAVE ROOT {}\n", .{root});
                 const left, const right = try root.split(pos);
+
                 var left_node = try self.allocator.create(Node);
                 const right_node = try self.allocator.create(Node);
-                // std.debug.print("LEFt {}\n", .{left});
-                // std.debug.print("Right {}\n", .{right});
                 left_node.* = left;
                 right_node.* = right;
+
                 var tmp = try left_node.join(leaf);
-                const res = try Node.join(&tmp, right_node);
-                const new_root = try self.allocator.create(Node);
-                new_root.* = res;
-                self.root = new_root;
+                var res = try Node.join(&tmp, right_node);
+                // const new_root = try self.allocator.create(Node);
+                // new_root.* = res;
+
+                Node.printNode(&res, 0);
+                self.allocator.destroy(left_node);
+                self.allocator.destroy(right_node);
+                // self.root = new_root;
+                // self.root.?.* = res;
+                self.root = null;
             } else {
                 self.root = leaf;
             }
-            try self.join(leaf);
         }
 
         /// Joins the root Node with a new Node

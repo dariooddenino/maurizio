@@ -233,12 +233,10 @@ test "Node" {
     //     // TODO BUG here, I'm splitting wrong
     //     try rope.insert("Hello world!", 0);
 
-    //     rope.print();
-
-    //     const result = try rope.getValueRange(0, 2);
+    //     const result = try rope.getValue();
     //     defer allocator.free(result);
 
-    //     try std.testing.expectEqualStrings("Hel", result);
+    //     try std.testing.expectEqualStrings("Hello world!", result);
     // }
 
     // We can join two Leaves into a Node and print the result
