@@ -310,7 +310,21 @@ test "Node" {
         try std.testing.expectEqualStrings("Hello world!", result);
     }
 
-    // TODO Memory leak
+    // We can correctly insert a string at the beginning of the rope
+    {
+        var rope = try Rope().fromString(allocator, "Maurizio!");
+        defer rope.deinit();
+
+        rope.print();
+        try rope.insert("Hello ", 0);
+        rope.print();
+
+        const result = try rope.getValue();
+        defer allocator.free(result);
+
+        try std.testing.expectEqualStrings("Hello Maurizio!", result);
+    }
+
     // We can join two Leaves into a Node and print the result
     {
         var rope = try Rope().fromString(allocator, "Hello, Maurizio!");
@@ -322,4 +336,22 @@ test "Node" {
 
         try std.testing.expectEqualStrings("Hello, World and Maurizio!", result);
     }
+
+    // Multiple insertions work correctly
+    // {
+    //     var rope = try Rope().fromString(allocator, "is a cat");
+    //     defer rope.deinit();
+
+    //     try rope.insert("Maurizio ", 0);
+    //     rope.print();
+    //     try rope.insert("!", 16);
+    //     rope.print();
+    //     try rope.insert("beautiful ", 14);
+    //     rope.print();
+
+    //     const result = try rope.getValue();
+    //     defer allocator.free(result);
+
+    //     try std.testing.expectEqualStrings("Maurizio is a beautiful cat!", result);
+    // }
 }

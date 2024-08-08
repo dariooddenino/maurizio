@@ -5,8 +5,8 @@ const Node = node_dep.Node;
 const Branch = node_dep.Branch;
 const Leaf = node_dep.Leaf;
 
-// TODO I have a memory leak triggered by the last test only
-// TODO possibly node.join should accept a *Node
+// TODO possible prolem with insert on a first leaf going all crazy on the right
+// TODO memory leak on multiple inserts
 
 // TODO how much should be in Rope and how much in the single nodes?
 // TODO splitting the modules doesn't work with pub, what can I do?
@@ -56,26 +56,13 @@ pub fn Rope() type {
             // const leaf: *Node = try self.newLeaf(string);
             if (self.root) |root| {
                 const left, const right = try root.split(self.allocator, pos);
-
-                // var left_node = try self.allocator.create(Node);
-                // const right_node = try self.allocator.create(Node);
-                // left_node.* = left;
-                // right_node.* = right;
+                defer self.allocator.destroy(right);
+                defer self.allocator.destroy(root);
 
                 // TODO Might have to change the order here
                 try left.join(self.allocator, Node.newLeaf(string));
                 try left.join(self.allocator, right.*);
 
-                // var tmp = try left.join(self.allocator, Node.newLeaf(string));
-                // var res = try tmp.join(self.allocator, right);
-                // var res = try Node.join(&tmp, right_node);
-                // const new_root = try self.allocator.create(Node);
-                // new_root.* = res;
-
-                // self.allocator.destroy(left_node);
-                // self.allocator.destroy(right_node);
-                // self.root = new_root;
-                // self.root.?.* = res;
                 self.root = left;
             } else {
                 const leaf = try self.allocator.create(Node);
@@ -103,13 +90,13 @@ pub fn Rope() type {
         pub fn split(self: *Self, pos: usize) struct { Self, Self } {
             if (self.root) |root| {
                 const left, const right = try root.split(pos);
-                const left_node = self.allocator.create(Node);
-                const right_node = self.allocator.create(Node);
-                left_node.* = left;
-                right_node.* = right;
+                // const left_node = self.allocator.create(Node);
+                // const right_node = self.allocator.create(Node);
+                // left_node.* = left;
+                // right_node.* = right;
                 return .{
-                    Self.fromNode(self.allocator, left_node),
-                    Self.fromNode(self.allocator, right_node),
+                    Self.fromNode(self.allocator, left),
+                    Self.fromNode(self.allocator, right),
                 };
             }
             // TODO what if the root is missing?
