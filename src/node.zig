@@ -80,6 +80,8 @@ pub const Node = union(enum) {
         const full_size = self.getFullSize() + other.getFullSize();
         const left = try allocator.create(Node);
         const right = try allocator.create(Node);
+        // defer allocator.destroy(left);
+        // defer allocator.destroy(right);
 
         left.* = self.*;
         right.* = other;
@@ -227,6 +229,21 @@ pub const Node = union(enum) {
             },
         }
     }
+
+    pub fn deinit(self: *Node, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .leaf => {},
+            .branch => |branch| {
+                if (branch.left) |left| {
+                    left.deinit(allocator);
+                }
+                if (branch.right) |right| {
+                    right.deinit(allocator);
+                }
+            },
+        }
+        allocator.destroy(self);
+    }
 };
 test "Node" {
     const allocator = std.testing.allocator;
@@ -279,6 +296,26 @@ test "Node" {
         try std.testing.expectEqualStrings("o", right.leaf.value);
     }
 
+    // A Branch splits correctly
+    {
+        const leaf = try allocator.create(Node);
+        leaf.* = Node.newLeaf("Hello");
+        defer leaf.deinit(allocator);
+        const leaf2 = Node.newLeaf(" World!");
+
+        try leaf.join(allocator, leaf2);
+        const left, const right = try leaf.split(allocator, 3);
+        defer left.deinit(allocator);
+        defer right.deinit(allocator);
+        leaf.printNode(0);
+        std.debug.print("---\n", .{});
+        left.printNode(0);
+        right.printNode(0);
+
+        // TODO I need  way to test the structure, more than the value.
+        // TODO maybe with a hashed representation?
+    }
+
     // We can join leaves and build a Rope
     {
         var rope = try Rope().fromString(std.testing.allocator, "Hello,");
@@ -315,9 +352,7 @@ test "Node" {
         var rope = try Rope().fromString(allocator, "Maurizio!");
         defer rope.deinit();
 
-        rope.print();
         try rope.insert("Hello ", 0);
-        rope.print();
 
         const result = try rope.getValue();
         defer allocator.free(result);
@@ -337,6 +372,8 @@ test "Node" {
         try std.testing.expectEqualStrings("Hello, World and Maurizio!", result);
     }
 
+    // TODO from the second insert onwards I get a leak again. Why??
+    // TODO the problem is Node.join
     // Multiple insertions work correctly
     // {
     //     var rope = try Rope().fromString(allocator, "is a cat");
@@ -346,8 +383,8 @@ test "Node" {
     //     rope.print();
     //     try rope.insert("!", 16);
     //     rope.print();
-    //     try rope.insert("beautiful ", 14);
-    //     rope.print();
+    //     // try rope.insert("beautiful ", 14);
+    //     // rope.print();
 
     //     const result = try rope.getValue();
     //     defer allocator.free(result);

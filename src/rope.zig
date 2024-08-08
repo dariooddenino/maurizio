@@ -6,7 +6,12 @@ const Branch = node_dep.Branch;
 const Leaf = node_dep.Leaf;
 
 // TODO possible prolem with insert on a first leaf going all crazy on the right
+//      Maybe I can solve this as a special case of a split on leaf on 0?
+//      The problem is that the function returns two pointers. It would require some rework.
+//      Maybe this would be good for a rebalance function?
 // TODO memory leak on multiple inserts
+//      This is also broken at the fundamental level. branch joins are probably the problem
+//      I should test those building blocks first
 
 // TODO how much should be in Rope and how much in the single nodes?
 // TODO splitting the modules doesn't work with pub, what can I do?
@@ -219,18 +224,19 @@ pub fn Rope() type {
 
         fn deinitNode(self: *Self, m_node: ?*Node) void {
             if (m_node) |node| {
-                switch (node.*) {
-                    .leaf => {},
-                    .branch => |branch| {
-                        if (branch.left) |left| {
-                            self.deinitNode(left);
-                        }
-                        if (branch.right) |right| {
-                            self.deinitNode(right);
-                        }
-                    },
-                }
-                self.allocator.destroy(node);
+                node.deinit(self.allocator);
+                // switch (node.*) {
+                //     .leaf => {},
+                //     .branch => |branch| {
+                //         if (branch.left) |left| {
+                //             self.deinitNode(left);
+                //         }
+                //         if (branch.right) |right| {
+                //             self.deinitNode(right);
+                //         }
+                //     },
+                // }
+                // self.allocator.destroy(node);
             }
         }
 
