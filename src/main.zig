@@ -1,5 +1,6 @@
 const std = @import("std");
-const rope = @import("rope.zig");
+// const rope = @import("rope.zig");
+const ropey = @import("ropey.zig");
 const vaxis = @import("vaxis");
 const Cell = vaxis.Cell;
 const TextInput = vaxis.widgets.TextInput;
@@ -224,5 +225,6 @@ pub fn main() !void {
 }
 
 test {
-    _ = rope;
+    // _ = rope;
+    _ = ropey;
 }
