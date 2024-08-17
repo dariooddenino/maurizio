@@ -61,6 +61,7 @@ pub fn build(b: *std.Build) void {
 
     exe_unit_tests.root_module.addImport("vaxis", vaxis_dep.module("vaxis"));
 
+    b.installArtifact(exe_unit_tests);
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
