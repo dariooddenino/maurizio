@@ -35,6 +35,16 @@ pub const Rope = struct {
         return self.root.index(pos);
     }
 
+    /// Convenience function to prepend a string in the Rope
+    pub fn prepend(self: *Rope, string: []const u8) !void {
+        try self.insert(string, 0);
+    }
+
+    /// Convenience function to insert at the end of the string
+    pub fn append(self: *Rope, string: []const u8) !void {
+        try self.insert(string, self.root.size);
+    }
+
     /// Inserts a String in the given position of the Rope
     /// NOTE: I'm not entirely sure if I'm inserting in the right place.
     /// NOTE: Also, I'm copying and redeleting the whole tree on an insert operation, not efficient for sure.
@@ -619,5 +629,17 @@ test "Rope" {
 
         // Lazy test
         try std.testing.expectEqualStrings(result, "Hello_my_new_name_is_Simon");
+    }
+    // Appending
+    {
+        var rope = try Rope.init(allocator, "Hello");
+        try rope.append(" World");
+        defer rope.deinit();
+
+        var expected = try allocator.create(Node);
+        expected.* = try Node.fromStrings(allocator, "Hello", " World");
+        defer expected.deinit(allocator);
+
+        try std.testing.expect(rope.root.isEqual(expected.*));
     }
 }
