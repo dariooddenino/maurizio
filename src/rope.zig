@@ -30,6 +30,11 @@ pub const Rope = struct {
         self.root.deinit(self.allocator);
     }
 
+    /// Returns the character at the given index
+    pub fn index(self: Rope, pos: usize) !u8 {
+        return self.root.index(pos);
+    }
+
     /// Inserts a String in the given position of the Rope
     /// NOTE: I'm not entirely sure if I'm inserting in the right place.
     /// NOTE: Also, I'm copying and redeleting the whole tree on an insert operation, not efficient for sure.
@@ -295,6 +300,30 @@ const Node = struct {
         return equal_props and equal_value and left_equal and right_equal;
     }
 
+    /// Returns the character at the given index
+    fn index(self: Node, pos: usize) !u8 {
+        if (self.is_leaf) {
+            if (pos >= self.size)
+                return error.OutOfBounds;
+
+            return self.value.?[pos];
+        } else {
+            if (pos >= self.size) {
+                if (self.right) |right| {
+                    return right.index(pos - self.size);
+                } else {
+                    return error.OutOfBounds;
+                }
+            } else {
+                if (self.left) |left| {
+                    return left.index(pos);
+                } else {
+                    return error.OutOfBounds;
+                }
+            }
+        }
+    }
+
     /// Saves in the buffer the value of the Node in the given range.
     fn getValueRange(self: Node, buffer: *std.ArrayList(u8), start: usize, end: usize) !void {
         if (self.is_leaf) {
@@ -356,93 +385,97 @@ const Node = struct {
 test "Rope" {
     const allocator = std.testing.allocator;
     // Initialize a Rope
-    // {
-    //     var rope = try Rope.init(allocator, "Hello");
-    //     defer rope.deinit();
+    {
+        var rope = try Rope.init(allocator, "Hello");
+        defer rope.deinit();
 
-    //     const result = try rope.getValue();
-    //     defer allocator.free(result);
+        const result = try rope.getValue();
+        defer allocator.free(result);
 
-    //     try std.testing.expectEqualStrings("Hello", result);
-    // }
+        try std.testing.expectEqualStrings("Hello", result);
+    }
+    // Index
+    {
+        var rope = try Rope.init(allocator, "Hello");
+        defer rope.deinit();
+
+        try rope.joinNode(Node.fromString(" World!"));
+
+        const char = try rope.index(6);
+
+        try std.testing.expectEqual(char, 'W');
+    }
     // Splitting Nodes on the right
-    // {
-    //     var node = try allocator.create(Node);
-    //     node.* = try Node.fromStrings(allocator, "Hello", " World!");
-    //     defer node.deinit(allocator);
+    {
+        var node = try allocator.create(Node);
+        node.* = try Node.fromStrings(allocator, "Hello", " World!");
+        defer node.deinit(allocator);
 
-    //     // std.debug.print("\n\nNODE:\n", .{});
-    //     // node.print(0);
+        const left, const right = try node.split(allocator, 7);
 
-    //     const left, const right = try node.split(allocator, 7);
+        if (left) |l| {
+            defer l.deinit(allocator);
+            var expected_left = try allocator.create(Node);
+            expected_left.* = try Node.fromStrings(allocator, "Hello", " W");
+            defer expected_left.deinit(allocator);
+            try std.testing.expect(l.isEqual(expected_left.*));
+        } else {
+            // NOTE print a custom message?
+            try std.testing.expect(false);
+        }
 
-    //     if (left) |l| {
-    //         defer l.deinit(allocator);
-    //         // std.debug.print("\n\nLEFT:\n", .{});
-    //         // l.print(0);
-    //         var expected_left = try allocator.create(Node);
-    //         expected_left.* = try Node.fromStrings(allocator, "Hello", " W");
-    //         defer expected_left.deinit(allocator);
-    //         try std.testing.expect(l.isEqual(expected_left.*));
-    //     } else {
-    //         // NOTE print a custom message?
-    //         try std.testing.expect(false);
-    //     }
-
-    //     if (right) |r| {
-    //         defer r.deinit(allocator);
-    //         // std.debug.print("\n\nRIGHT:\n", .{});
-    //         // r.print(0);
-    //         var expected_right = try allocator.create(Node);
-    //         expected_right.* = Node.fromString("orld!");
-    //         defer expected_right.deinit(allocator);
-    //         try std.testing.expect(r.isEqual(expected_right.*));
-    //     } else {
-    //         // NOTE print a custom message?
-    //         try std.testing.expect(false);
-    //     }
-    // }
+        if (right) |r| {
+            defer r.deinit(allocator);
+            var expected_right = try allocator.create(Node);
+            expected_right.* = Node.fromString("orld!");
+            defer expected_right.deinit(allocator);
+            try std.testing.expect(r.isEqual(expected_right.*));
+        } else {
+            // NOTE print a custom message?
+            try std.testing.expect(false);
+        }
+    }
     // Splitting nodes on the left
-    // {
-    //     var node = try allocator.create(Node);
-    //     node.* = try Node.fromStrings(allocator, "Hello", " World!");
-    //     defer node.deinit(allocator);
+    {
+        var node = try allocator.create(Node);
+        node.* = try Node.fromStrings(allocator, "Hello", " World!");
+        defer node.deinit(allocator);
 
-    //     const left, const right = try node.split(allocator, 3);
-    //     defer left.?.deinit(allocator);
-    //     defer right.?.deinit(allocator);
+        const left, const right = try node.split(allocator, 3);
+        defer left.?.deinit(allocator);
+        defer right.?.deinit(allocator);
 
-    //     if (left) |l| {
-    //         var expected_left = try allocator.create(Node);
-    //         expected_left.* = Node.fromString("Hel");
-    //         defer expected_left.deinit(allocator);
-    //         try std.testing.expect(l.isEqual(expected_left.*));
-    //     } else {
-    //         // NOTE print a custom message?
-    //         try std.testing.expect(false);
-    //     }
+        if (left) |l| {
+            var expected_left = try allocator.create(Node);
+            expected_left.* = Node.fromString("Hel");
+            defer expected_left.deinit(allocator);
+            try std.testing.expect(l.isEqual(expected_left.*));
+        } else {
+            // NOTE print a custom message?
+            try std.testing.expect(false);
+        }
 
-    //     if (right) |r| {
-    //         var expected_right = try allocator.create(Node);
-    //         expected_right.* = try Node.fromStrings(allocator, "lo", " World!");
-    //         defer expected_right.deinit(allocator);
-    //         try std.testing.expect(r.isEqual(expected_right.*));
-    //     } else {
-    //         // NOTE print a custom message?
-    //         try std.testing.expect(false);
-    //     }
-    // }
+        if (right) |r| {
+            var expected_right = try allocator.create(Node);
+            expected_right.* = try Node.fromStrings(allocator, "lo", " World!");
+            defer expected_right.deinit(allocator);
+            try std.testing.expect(r.isEqual(expected_right.*));
+        } else {
+            // NOTE print a custom message?
+            try std.testing.expect(false);
+        }
+    }
     // Testing clone
-    // {
-    //     var node = try allocator.create(Node);
-    //     node.* = try Node.fromStrings(allocator, "Hello", " World!");
-    //     defer node.deinit(allocator);
-    //     var clone = try allocator.create(Node);
-    //     clone.* = try node.clone(allocator);
-    //     defer clone.deinit(allocator);
+    {
+        var node = try allocator.create(Node);
+        node.* = try Node.fromStrings(allocator, "Hello", " World!");
+        defer node.deinit(allocator);
+        var clone = try allocator.create(Node);
+        clone.* = try node.clone(allocator);
+        defer clone.deinit(allocator);
 
-    //     try std.testing.expect(node.isEqual(clone.*));
-    // }
+        try std.testing.expect(node.isEqual(clone.*));
+    }
     // Bigger tree split
     {
         var node_1 = try allocator.create(Node);
