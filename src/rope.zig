@@ -1,12 +1,19 @@
 const std = @import("std");
 
 // TODOS
+// index op
+// delete op
+// rebalance op
+// - max leaf size
+// - load from file
 // - fromString / fromStrings should return a pointer and take the allocator
 // - maybe join shouldn't copy the original string?
 
 // NOTES
 // - full_size needs to be checked, how was it behaving before?
 // - does split update sizes correctly?
+// - persitency of the tree -> this will impact on how nodes are handled in memory
+// - is this memory model correct?
 
 pub const Rope = struct {
     allocator: std.mem.Allocator,
@@ -23,8 +30,33 @@ pub const Rope = struct {
         self.root.deinit(self.allocator);
     }
 
+    /// Inserts a String in the given position of the Rope
+    /// NOTE: I'm not entirely sure if I'm inserting in the right place.
+    /// NOTE: Also, I'm copying and redeleting the whole tree on an insert operation, not efficient for sure.
+    pub fn insert(self: *Rope, string: []const u8, pos: usize) !void {
+        const allocator = self.allocator;
+        const left_split, const right_split = try self.root.split(allocator, pos);
+
+        var new_root: *Node = undefined;
+        if (left_split) |left| {
+            new_root = left;
+            try new_root.join(allocator, Node.fromString(string));
+        } else {
+            new_root = try allocator.create(Node);
+            new_root.* = Node.fromString(string);
+        }
+
+        if (right_split) |right| {
+            defer right.deinit(allocator);
+            try new_root.join(allocator, right.*);
+        }
+
+        self.root.deinit(allocator);
+        self.root = new_root;
+    }
+
     /// Join a new Node into the Rope
-    fn join(self: *Rope, other: Node) !void {
+    fn joinNode(self: *Rope, other: Node) !void {
         try self.root.join(self.allocator, other);
     }
 
@@ -502,5 +534,57 @@ test "Rope" {
             // NOTE print a custom message?
             try std.testing.expect(false);
         }
+    }
+    // Inserting into position 0
+    {
+        var rope = try Rope.init(allocator, "World!");
+        defer rope.deinit();
+        try rope.insert("Hello ", 0);
+
+        var expected = try allocator.create(Node);
+        expected.* = try Node.fromStrings(allocator, "Hello ", "World!");
+        defer expected.deinit(allocator);
+
+        try std.testing.expect(rope.root.isEqual(expected.*));
+    }
+    // Inserting into last position
+    {
+        var rope = try Rope.init(allocator, "Hello ");
+        defer rope.deinit();
+        try rope.insert("World!", 6);
+
+        var expected = try allocator.create(Node);
+        expected.* = try Node.fromStrings(allocator, "Hello ", "World!");
+        defer expected.deinit(allocator);
+
+        try std.testing.expect(rope.root.isEqual(expected.*));
+    }
+    // Inserting in the middle of a big tree
+    {
+        var node_1 = try allocator.create(Node);
+        node_1.* = try Node.fromStrings(allocator, "Hello_", "my_");
+        // defer node_1.deinit(allocator);
+
+        var node_2 = try allocator.create(Node);
+        node_2.* = try Node.fromStrings(allocator, "na", "me_i");
+        defer node_2.deinit(allocator);
+
+        var node_3 = try allocator.create(Node);
+        node_3.* = try Node.fromStrings(allocator, "s", "_Simon");
+        defer node_3.deinit(allocator);
+
+        try node_2.join(allocator, node_3.*);
+        try node_1.join(allocator, node_2.*);
+
+        var rope = Rope{ .root = node_1, .allocator = allocator };
+
+        try rope.insert("new_", 9);
+        defer rope.deinit();
+
+        const result = try rope.getValue();
+        defer allocator.free(result);
+
+        // Lazy test
+        try std.testing.expectEqualStrings(result, "Hello_my_new_name_is_Simon");
     }
 }
