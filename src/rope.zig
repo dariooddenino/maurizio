@@ -74,7 +74,7 @@ pub const Rope = struct {
 
     /// Convenience function to insert at the end of the string
     pub fn append(self: *Rope, string: []const u8) !void {
-        try self.insert(string, self.root.size);
+        try self.insert(string, self.root.full_size);
     }
 
     /// Inserts a String in the given position of the Rope
@@ -699,5 +699,24 @@ test "Rope" {
 
         // TODO I should test for the tree structure here.
         try std.testing.expectEqualStrings(result, "Helame_is_Simon");
+    }
+    // Multiple operations
+    {
+        var rope = try Rope.init(allocator, "Hello");
+        defer rope.deinit();
+
+        try rope.append(" my name");
+        try rope.append(" is Simon");
+
+        try rope.delete(6, 2);
+        try rope.insert("our", 6);
+
+        try rope.delete(18, 5);
+        try rope.append("Maurizio!");
+
+        const result = try rope.getValue();
+        defer allocator.free(result);
+
+        try std.testing.expectEqualStrings(result, "Hello our name is Maurizio!");
     }
 }
