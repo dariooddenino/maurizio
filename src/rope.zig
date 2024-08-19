@@ -1,11 +1,9 @@
 const std = @import("std");
 
 // TODOS
-// delete op
 // rebalance op (join, split, delete... ?)
 // - max leaf size
 // - load from file
-// - fromString / fromStrings should return a pointer and take the allocator
 // - maybe join shouldn't copy the original string?
 
 // NOTES
@@ -151,14 +149,16 @@ const Node = struct {
     }
 
     /// Create a branch Node from two strings.
-    fn fromStrings(allocator: std.mem.Allocator, left_string: []const u8, right_string: []const u8) !Node {
+    fn fromStrings(allocator: std.mem.Allocator, left_string: []const u8, right_string: []const u8) !*Node {
         const left = try allocator.create(Node);
         const right = try allocator.create(Node);
 
         left.* = Node.fromString(left_string);
         right.* = Node.fromString(right_string);
 
-        return .{
+        const result = try allocator.create(Node);
+
+        result.* = .{
             .value = null,
             .size = left.size,
             .full_size = left.size + right.size,
@@ -166,6 +166,8 @@ const Node = struct {
             .right = right,
             .is_leaf = false,
         };
+
+        return result;
     }
 
     /// Deinits the Node an all its children
@@ -451,16 +453,14 @@ test "Rope" {
     }
     // Splitting Nodes on the right
     {
-        var node = try allocator.create(Node);
-        node.* = try Node.fromStrings(allocator, "Hello", " World!");
+        var node = try Node.fromStrings(allocator, "Hello", " World!");
         defer node.deinit(allocator);
 
         const left, const right = try node.split(allocator, 7);
 
         if (left) |l| {
             defer l.deinit(allocator);
-            var expected_left = try allocator.create(Node);
-            expected_left.* = try Node.fromStrings(allocator, "Hello", " W");
+            var expected_left = try Node.fromStrings(allocator, "Hello", " W");
             defer expected_left.deinit(allocator);
             try std.testing.expect(l.isEqual(expected_left.*));
         } else {
@@ -481,8 +481,7 @@ test "Rope" {
     }
     // Splitting nodes on the left
     {
-        var node = try allocator.create(Node);
-        node.* = try Node.fromStrings(allocator, "Hello", " World!");
+        var node = try Node.fromStrings(allocator, "Hello", " World!");
         defer node.deinit(allocator);
 
         const left, const right = try node.split(allocator, 3);
@@ -500,8 +499,7 @@ test "Rope" {
         }
 
         if (right) |r| {
-            var expected_right = try allocator.create(Node);
-            expected_right.* = try Node.fromStrings(allocator, "lo", " World!");
+            var expected_right = try Node.fromStrings(allocator, "lo", " World!");
             defer expected_right.deinit(allocator);
             try std.testing.expect(r.isEqual(expected_right.*));
         } else {
@@ -511,8 +509,7 @@ test "Rope" {
     }
     // Testing clone
     {
-        var node = try allocator.create(Node);
-        node.* = try Node.fromStrings(allocator, "Hello", " World!");
+        var node = try Node.fromStrings(allocator, "Hello", " World!");
         defer node.deinit(allocator);
         var clone = try allocator.create(Node);
         clone.* = try node.clone(allocator);
@@ -522,16 +519,13 @@ test "Rope" {
     }
     // Bigger tree split
     {
-        var node_1 = try allocator.create(Node);
-        node_1.* = try Node.fromStrings(allocator, "Hello_", "my_");
+        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
         defer node_1.deinit(allocator);
 
-        var node_2 = try allocator.create(Node);
-        node_2.* = try Node.fromStrings(allocator, "na", "me_i");
+        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
         defer node_2.deinit(allocator);
 
-        var node_3 = try allocator.create(Node);
-        node_3.* = try Node.fromStrings(allocator, "s", "_Simon");
+        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
         defer node_3.deinit(allocator);
 
         try node_2.join(allocator, node_3.*);
@@ -555,8 +549,7 @@ test "Rope" {
             defer r.deinit(allocator);
             var expected_right = try allocator.create(Node);
             defer expected_right.deinit(allocator);
-            var right_right = try allocator.create(Node);
-            right_right.* = try Node.fromStrings(allocator, "s", "_Simon");
+            var right_right = try Node.fromStrings(allocator, "s", "_Simon");
             defer right_right.deinit(allocator);
             expected_right.* = Node.fromString("me_i");
             try expected_right.join(allocator, right_right.*);
@@ -568,16 +561,13 @@ test "Rope" {
     }
     // Bigger tree split middle of leaf
     {
-        var node_1 = try allocator.create(Node);
-        node_1.* = try Node.fromStrings(allocator, "Hello_", "my_");
+        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
         defer node_1.deinit(allocator);
 
-        var node_2 = try allocator.create(Node);
-        node_2.* = try Node.fromStrings(allocator, "na", "me_i");
+        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
         defer node_2.deinit(allocator);
 
-        var node_3 = try allocator.create(Node);
-        node_3.* = try Node.fromStrings(allocator, "s", "_Simon");
+        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
         defer node_3.deinit(allocator);
 
         try node_2.join(allocator, node_3.*);
@@ -601,8 +591,7 @@ test "Rope" {
             defer r.deinit(allocator);
             var expected_right = try allocator.create(Node);
             defer expected_right.deinit(allocator);
-            var right_right = try allocator.create(Node);
-            right_right.* = try Node.fromStrings(allocator, "s", "_Simon");
+            var right_right = try Node.fromStrings(allocator, "s", "_Simon");
             defer right_right.deinit(allocator);
             expected_right.* = Node.fromString("e_i");
             try expected_right.join(allocator, right_right.*);
@@ -618,8 +607,7 @@ test "Rope" {
         defer rope.deinit();
         try rope.insert("Hello ", 0);
 
-        var expected = try allocator.create(Node);
-        expected.* = try Node.fromStrings(allocator, "Hello ", "World!");
+        var expected = try Node.fromStrings(allocator, "Hello ", "World!");
         defer expected.deinit(allocator);
 
         try std.testing.expect(rope.root.isEqual(expected.*));
@@ -630,24 +618,20 @@ test "Rope" {
         defer rope.deinit();
         try rope.insert("World!", 6);
 
-        var expected = try allocator.create(Node);
-        expected.* = try Node.fromStrings(allocator, "Hello ", "World!");
+        var expected = try Node.fromStrings(allocator, "Hello ", "World!");
         defer expected.deinit(allocator);
 
         try std.testing.expect(rope.root.isEqual(expected.*));
     }
     // Inserting in the middle of a big tree
     {
-        var node_1 = try allocator.create(Node);
-        node_1.* = try Node.fromStrings(allocator, "Hello_", "my_");
+        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
         // defer node_1.deinit(allocator);
 
-        var node_2 = try allocator.create(Node);
-        node_2.* = try Node.fromStrings(allocator, "na", "me_i");
+        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
         defer node_2.deinit(allocator);
 
-        var node_3 = try allocator.create(Node);
-        node_3.* = try Node.fromStrings(allocator, "s", "_Simon");
+        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
         defer node_3.deinit(allocator);
 
         try node_2.join(allocator, node_3.*);
@@ -670,8 +654,7 @@ test "Rope" {
         try rope.append(" World");
         defer rope.deinit();
 
-        var expected = try allocator.create(Node);
-        expected.* = try Node.fromStrings(allocator, "Hello", " World");
+        var expected = try Node.fromStrings(allocator, "Hello", " World");
         defer expected.deinit(allocator);
 
         try std.testing.expect(rope.root.isEqual(expected.*));
@@ -687,8 +670,7 @@ test "Rope" {
         defer result.deinit(allocator);
         result.* = Node.fromString("Hel");
 
-        var res_left = try allocator.create(Node);
-        res_left.* = try Node.fromStrings(allocator, "lo", " World");
+        var res_left = try Node.fromStrings(allocator, "lo", " World");
         try result.join(allocator, res_left.*);
         res_left.deinit(allocator);
 
@@ -696,16 +678,12 @@ test "Rope" {
     }
     // Deleting in a more complex tree
     {
-        var node_1 = try allocator.create(Node);
-        node_1.* = try Node.fromStrings(allocator, "Hello_", "my_");
-        // defer node_1.deinit(allocator);
+        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
 
-        var node_2 = try allocator.create(Node);
-        node_2.* = try Node.fromStrings(allocator, "na", "me_i");
+        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
         defer node_2.deinit(allocator);
 
-        var node_3 = try allocator.create(Node);
-        node_3.* = try Node.fromStrings(allocator, "s", "_Simon");
+        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
         defer node_3.deinit(allocator);
 
         try node_2.join(allocator, node_3.*);
