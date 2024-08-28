@@ -2,6 +2,7 @@ const std = @import("std");
 const rope = @import("rope.zig");
 const vaxis = @import("vaxis");
 const Cell = vaxis.Cell;
+const TextArea = @import("textarea.zig").TextArea;
 const TextInput = vaxis.widgets.TextInput;
 const border = vaxis.widgets.border;
 
@@ -47,18 +48,18 @@ const MyApp = struct {
     /// Tracking the color
     color_idx: u8 = 0,
     /// The text input
-    text_input: TextInput,
+    // text_input: TextArea,
 
     pub fn init(allocator: std.mem.Allocator) !MyApp {
-        var vx = try vaxis.init(allocator, .{});
-        const text_input = TextInput.init(allocator, &vx.unicode);
+        const vx = try vaxis.init(allocator, .{});
+        // const text_input = try TextArea.init(allocator, &vx.unicode);
         return .{
             .allocator = allocator,
             .should_quit = false,
             .tty = try vaxis.Tty.init(),
             .vx = vx,
             .mouse = null,
-            .text_input = text_input,
+            // .text_input = text_input,
         };
     }
 
@@ -66,7 +67,7 @@ const MyApp = struct {
         // Deinit takes an optional allocator. You can choose to pass an allocator
         // to clean up memory, or pass null if your application is shutting down
         // and let the OS clean up the memory
-        self.text_input.deinit();
+        // self.text_input.deinit();
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
     }
@@ -109,7 +110,7 @@ const MyApp = struct {
             }
 
             // Draw our application after handling events
-            self.draw();
+            try self.draw();
 
             // It's best to use a buffered writer for the render method. TTY provides one, but you
             // may use your own. The provided bufferedWriter has a buffer size of 4096
@@ -136,7 +137,7 @@ const MyApp = struct {
                 } else if (key.matches('l', .{ .ctrl = true })) {
                     self.vx.queueRefresh();
                 } else {
-                    try self.text_input.update(.{ .key_press = key });
+                    // try self.text_input.update(.{ .key_press = key });
                 }
             },
             .mouse => |mouse| self.mouse = mouse,
@@ -146,7 +147,7 @@ const MyApp = struct {
     }
 
     /// Draw our current state
-    pub fn draw(self: *MyApp) void {
+    pub fn draw(self: *MyApp) !void {
 
         // Window is a bounded area with a view to the screen. You cannot draw outside of a window's
         // bounds. They are light structures, not intended to be stored.
@@ -161,26 +162,43 @@ const MyApp = struct {
         // be changing that as well
         self.vx.setMouseShape(.default);
 
+        const maurizio_color: usize = 233;
+
         // Create a style
         const style: vaxis.Style = .{
-            .fg = .{ .index = self.color_idx },
+            .fg = .{ .index = maurizio_color },
         };
 
+        const logo_height = 6;
+        const logo_width = 20;
         // Create a bordered child window
-        const child = win.child(.{
-            .x_off = win.width / 2 - 20,
-            .y_off = win.height / 2 - 3,
-            .width = .{ .limit = 40 },
-            .height = .{ .limit = 3 },
+        const logo_child = win.child(.{
             .border = .{ .where = .all, .style = style },
+            .x_off = win.width - logo_width,
+            .y_off = win.height - logo_height,
+            .width = .{ .limit = logo_width },
+            .height = .{ .limit = logo_height },
         });
 
-        // const child = win.child(.{
-        //     .x_off = (win.width / 2) - 7,
-        //     .y_off = win.height / 2 + 1,
-        //     .width = .{ .limit = msg.len },
-        //     .height = .{ .limit = 1 },
-        // });
+        const logo_msg = "      /\\_/\\\n     ( o.o )\n      > ^ <\n M A U R I Z I O";
+
+        var logo_row: usize = 0;
+        var logo_current_col: usize = 0;
+        for (logo_msg, 0..) |_, i| {
+            const cell: Cell = .{
+                .char = .{ .grapheme = logo_msg[i .. i + 1] },
+                .style = .{
+                    .fg = .{ .index = 3 },
+                },
+            };
+            if (std.mem.eql(u8, logo_msg[i .. i + 1], "\n")) {
+                logo_row += 1;
+                logo_current_col = 0;
+            } else {
+                logo_child.writeCell(logo_current_col, logo_row, cell);
+                logo_current_col += 1;
+            }
+        }
 
         // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
         // determine if the event occurred in the target window. This method returns null if there
@@ -198,7 +216,28 @@ const MyApp = struct {
         // _ = try child.printSegment(.{ .text = msg, .style = style }, .{});
 
         // Draw the text input in the child window
-        self.text_input.draw(child);
+        // try self.text_input.draw(child);
+
+        const msg = "Hello, \nworld!";
+        const child = win.initChild(0, 0, .expand, .expand);
+        var row: usize = 0;
+        var current_col: usize = 0;
+        for (msg, 0..) |_, i| {
+            const cell: Cell = .{
+                .char = .{ .grapheme = msg[i .. i + 1] },
+                .style = .{
+                    .fg = .{ .index = 233 },
+                },
+            };
+            if (std.mem.eql(u8, msg[i .. i + 1], "\n")) {
+                row += 1;
+                current_col = 0;
+            } else {
+                child.writeCell(current_col, row, cell);
+                current_col += 1;
+            }
+        }
+        try self.vx.render(self.tty.anyWriter());
     }
 };
 
