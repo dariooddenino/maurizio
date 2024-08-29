@@ -2,6 +2,8 @@ const std = @import("std");
 const rope = @import("rope.zig");
 const vaxis = @import("vaxis");
 const Cell = vaxis.Cell;
+const Key = vaxis.Key;
+const Rope = rope.Rope;
 const TextArea = @import("textarea.zig").TextArea;
 const TextInput = vaxis.widgets.TextInput;
 const border = vaxis.widgets.border;
@@ -21,8 +23,8 @@ pub const std_options: std.Options = .{
 /// Tagged union of all events our application will handle. These can be generated
 /// by Vaxis or your own custom events
 const Event = union(enum) {
-    key_press: vaxis.Key,
-    key_release: vaxis.Key,
+    key_press: Key,
+    key_release: Key,
     mouse: vaxis.Mouse,
     focus_in, // window has gained focus
     focus_out, // window has lost focus
@@ -49,6 +51,7 @@ const MyApp = struct {
     color_idx: u8 = 0,
     /// The text input
     // text_input: TextArea,
+    rope: Rope,
 
     pub fn init(allocator: std.mem.Allocator) !MyApp {
         const vx = try vaxis.init(allocator, .{});
@@ -60,6 +63,7 @@ const MyApp = struct {
             .vx = vx,
             .mouse = null,
             // .text_input = text_input,
+            .rope = try Rope.init(allocator, ""),
         };
     }
 
@@ -67,7 +71,7 @@ const MyApp = struct {
         // Deinit takes an optional allocator. You can choose to pass an allocator
         // to clean up memory, or pass null if your application is shutting down
         // and let the OS clean up the memory
-        // self.text_input.deinit();
+        self.rope.deinit();
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
     }
@@ -110,7 +114,9 @@ const MyApp = struct {
             }
 
             // Draw our application after handling events
-            try self.draw();
+            const content = try self.rope.getValue();
+            defer self.allocator.free(content);
+            try self.draw(content);
 
             // It's best to use a buffered writer for the render method. TTY provides one, but you
             // may use your own. The provided bufferedWriter has a buffer size of 4096
@@ -137,7 +143,7 @@ const MyApp = struct {
                 } else if (key.matches('l', .{ .ctrl = true })) {
                     self.vx.queueRefresh();
                 } else {
-                    // try self.text_input.update(.{ .key_press = key });
+                    try self.handleKey(.{ .key_press = key });
                 }
             },
             .mouse => |mouse| self.mouse = mouse,
@@ -146,8 +152,43 @@ const MyApp = struct {
         }
     }
 
+    fn handleKey(self: *MyApp, event: Event) !void {
+        switch (event) {
+            .key_press => |key| {
+                if (key.matches(Key.backspace, .{})) {
+                    // self.deleteBeforeCursor();
+                } else if (key.matches(Key.delete, .{}) or key.matches('d', .{ .ctrl = true })) {
+                    // self.deleteAfterCursor();
+                } else if (key.matches(Key.left, .{}) or key.matches('b', .{ .ctrl = true })) {
+                    // self.cursorLeft();
+                } else if (key.matches(Key.right, .{}) or key.matches('f', .{ .ctrl = true })) {
+                    // self.cursorRight();
+                } else if (key.matches('a', .{ .ctrl = true }) or key.matches(Key.home, .{})) {
+                    // self.buf.moveGapLeft(self.buf.firstHalf().len);
+                } else if (key.matches('e', .{ .ctrl = true }) or key.matches(Key.end, .{})) {
+                    // self.buf.moveGapRight(self.buf.secondHalf().len);
+                } else if (key.matches('k', .{ .ctrl = true })) {
+                    // self.deleteToEnd();
+                } else if (key.matches('u', .{ .ctrl = true })) {
+                    // self.deleteToStart();
+                } else if (key.matches('b', .{ .alt = true }) or key.matches(Key.left, .{ .alt = true })) {
+                    // self.moveBackwardWordwise();
+                } else if (key.matches('f', .{ .alt = true }) or key.matches(Key.right, .{ .alt = true })) {
+                    // self.moveForwardWordwise();
+                } else if (key.matches('w', .{ .ctrl = true }) or key.matches(Key.backspace, .{ .alt = true })) {
+                    // self.deleteWordBefore();
+                } else if (key.matches('d', .{ .alt = true })) {
+                    // self.deleteWordAfter();
+                } else if (key.text) |text| {
+                    try self.rope.append(text);
+                }
+            },
+            else => {},
+        }
+    }
+
     /// Draw our current state
-    pub fn draw(self: *MyApp) !void {
+    pub fn draw(self: *MyApp, msg: []const u8) !void {
 
         // Window is a bounded area with a view to the screen. You cannot draw outside of a window's
         // bounds. They are light structures, not intended to be stored.
@@ -218,26 +259,99 @@ const MyApp = struct {
         // Draw the text input in the child window
         // try self.text_input.draw(child);
 
-        const msg = "Hello, \nworld!";
         const child = win.initChild(0, 0, .expand, .expand);
-        var row: usize = 0;
-        var current_col: usize = 0;
-        for (msg, 0..) |_, i| {
-            const cell: Cell = .{
-                .char = .{ .grapheme = msg[i .. i + 1] },
-                .style = .{
-                    .fg = .{ .index = 233 },
-                },
-            };
-            if (std.mem.eql(u8, msg[i .. i + 1], "\n")) {
-                row += 1;
-                current_col = 0;
-            } else {
-                child.writeCell(current_col, row, cell);
-                current_col += 1;
+
+        var msg_iter = self.vx.unicode.graphemeIterator(msg);
+        // var row: usize = 0;
+        // var col: usize = 0;
+        // var i: usize = 0;
+
+        // const ellipsis: Cell.Character = .{ .grapheme = "…", .width = 1 };
+
+        const Pos = struct { x: usize = 0, y: usize = 0 };
+        var pos: Pos = .{};
+        var byte_index: usize = 0;
+
+        // for (msg_iter.items(.len), msg_iter.items(.offset), 0..) |g_len, g_offset, index| {
+        var index: usize = 0;
+        while (msg_iter.next()) |grapheme| {
+            defer index += 1;
+            const cluster = msg[grapheme.offset..][0..grapheme.len];
+            defer byte_index += cluster.len;
+
+            // Why isn't the new line char working? :/
+            if (std.mem.eql(u8, cluster, "1")) {
+                if (index == msg.len - 1) {
+                    break;
+                }
+                pos.y += 1;
+                pos.x = 0;
+                continue;
             }
+
+            const width = child.gwidth(cluster);
+            defer pos.x +|= width;
+
+            child.writeCell(pos.x, pos.y, .{
+                .char = .{
+                    .grapheme = cluster,
+                    .width = width,
+                },
+            });
         }
-        try self.vx.render(self.tty.anyWriter());
+
+        // while (msg_iter.next()) |grapheme| {
+        //     const g = grapheme.bytes(msg);
+        //     const w = child.gwidth(g);
+        //     // TODO this need to take rows into account :/
+        //     if (col + w >= child.width) {
+        //         child.writeCell(child.width - 1, row, .{ .char = ellipsis });
+        //         break;
+        //     }
+        //     // if (std.mem.eql(u8, g, "\n")) {
+        //     if (grapheme.code == '\n') {
+        //         // row += 1;
+        //         // col = 0;
+        //         row = 0;
+        //         child.writeCell(col, row, .{
+        //             .char = .{
+        //                 .grapheme = "@",
+        //                 .width = w,
+        //             },
+        //         });
+        //     } else {
+        //         child.writeCell(col, row, .{
+        //             .char = .{
+        //                 .grapheme = g,
+        //                 .width = w,
+        //             },
+        //         });
+        //         col += w;
+        //         i += 1;
+        //     }
+        // }
+
+        // const child = win.initChild(0, 0, .expand, .expand);
+        // var row: usize = 0;
+        // var current_col: usize = 0;
+        // for (msg, 0..) |_, i| {
+        //     const cell: Cell = .{
+        //         .char = .{ .grapheme = msg[i .. i + 1] },
+        //         .style = .{
+        //             .fg = .{ .index = 233 },
+        //         },
+        //     };
+        //     if (std.mem.eql(u8, msg[i .. i + 1], "\n")) {
+        //         row += 1;
+        //         current_col = 0;
+        //     } else {
+        //         child.writeCell(current_col, row, cell);
+        //         current_col += 1;
+        //     }
+        // }
+
+        // IS THIS USLESS?
+        // try self.vx.render(self.tty.anyWriter());
     }
 };
 
