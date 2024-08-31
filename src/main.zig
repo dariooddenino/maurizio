@@ -1,6 +1,7 @@
 const std = @import("std");
 const rope = @import("rope.zig");
 const vaxis = @import("vaxis");
+const Buffer = @import("buffer.zig").Buffer;
 const Cell = vaxis.Cell;
 const Key = vaxis.Key;
 const Rope = rope.Rope;
@@ -37,7 +38,7 @@ const Event = union(enum) {
 };
 
 /// The application state
-const MyApp = struct {
+const Maurizio = struct {
     allocator: std.mem.Allocator,
     /// A flag for if we should quit
     should_quit: bool,
@@ -49,34 +50,33 @@ const MyApp = struct {
     mouse: ?vaxis.Mouse,
     /// Tracking the color
     color_idx: u8 = 0,
-    /// The text input
-    // text_input: TextArea,
-    rope: Rope,
+    /// One buffer for now
+    buffer: *Buffer,
 
-    pub fn init(allocator: std.mem.Allocator) !MyApp {
+    pub fn init(allocator: std.mem.Allocator) !Maurizio {
         const vx = try vaxis.init(allocator, .{});
-        // const text_input = try TextArea.init(allocator, &vx.unicode);
+        const buffer = try allocator.create(Buffer);
+        buffer.* = try Buffer.initEmpty(allocator);
         return .{
             .allocator = allocator,
             .should_quit = false,
             .tty = try vaxis.Tty.init(),
             .vx = vx,
             .mouse = null,
-            // .text_input = text_input,
-            .rope = try Rope.init(allocator, ""),
+            .buffer = buffer,
         };
     }
 
-    pub fn deinit(self: *MyApp) void {
+    pub fn deinit(self: *Maurizio) void {
         // Deinit takes an optional allocator. You can choose to pass an allocator
         // to clean up memory, or pass null if your application is shutting down
         // and let the OS clean up the memory
-        self.rope.deinit();
+        self.buffer.deinit();
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
     }
 
-    pub fn run(self: *MyApp) !void {
+    pub fn run(self: *Maurizio) !void {
         // Initialize the event loop. This particular loop requires intrusive init
         var loop: vaxis.Loop(Event) = .{
             .tty = &self.tty,
@@ -114,7 +114,7 @@ const MyApp = struct {
             }
 
             // Draw our application after handling events
-            const content = try self.rope.getValue();
+            const content = try self.buffer.rope.getValue();
             defer self.allocator.free(content);
             try self.draw(content);
 
@@ -128,7 +128,7 @@ const MyApp = struct {
     }
 
     /// Update our applciation state from an event
-    pub fn update(self: *MyApp, event: Event) !void {
+    pub fn update(self: *Maurizio, event: Event) !void {
         switch (event) {
             .key_press => |key| {
                 // key.matches does some basic matching algorithms. Key matching can be complex in
@@ -152,18 +152,24 @@ const MyApp = struct {
         }
     }
 
-    fn handleKey(self: *MyApp, event: Event) !void {
+    fn handleKey(self: *Maurizio, event: Event) !void {
         switch (event) {
             .key_press => |key| {
                 if (key.matches(Key.backspace, .{})) {
                     // self.deleteBeforeCursor();
-                    try self.rope.deleteLast();
+                    // To delete properly I have to to go from .{x, y} to pos, which I can't do right now.
+                    try self.buffer.rope.deleteLast();
+                    self.buffer.cursor.moveLeft();
                 } else if (key.matches(Key.delete, .{}) or key.matches('d', .{ .ctrl = true })) {
                     // self.deleteAfterCursor();
                 } else if (key.matches(Key.left, .{}) or key.matches('b', .{ .ctrl = true })) {
-                    // self.cursorLeft();
+                    self.buffer.cursor.moveLeft();
                 } else if (key.matches(Key.right, .{}) or key.matches('f', .{ .ctrl = true })) {
-                    // self.cursorRight();
+                    self.buffer.cursor.moveRight();
+                } else if (key.matches(Key.up, .{})) {
+                    self.buffer.cursor.moveUp();
+                } else if (key.matches(Key.down, .{})) {
+                    self.buffer.cursor.moveDown();
                 } else if (key.matches('a', .{ .ctrl = true }) or key.matches(Key.home, .{})) {
                     // self.buf.moveGapLeft(self.buf.firstHalf().len);
                 } else if (key.matches('e', .{ .ctrl = true }) or key.matches(Key.end, .{})) {
@@ -180,22 +186,49 @@ const MyApp = struct {
                     // self.deleteWordBefore();
                 } else if (key.matches('d', .{ .alt = true })) {
                     // self.deleteWordAfter();
+                } else if (key.matches('s', .{ .ctrl = true })) {
+                    const file = try std.fs.cwd().createFile(
+                        "test_output.md",
+                        .{},
+                    );
+                    defer file.close();
+                    const content = try self.buffer.rope.getValue();
+                    defer self.allocator.free(content);
+                    _ = try file.writeAll(content);
                 } else if (key.matches(Key.enter, .{})) {
-                    try self.rope.append("\n");
+                    try self.buffer.rope.append("\n");
+                    self.buffer.cursor.toNewLine();
                 } else if (key.text) |text| {
-                    try self.rope.append(text);
+                    try self.buffer.rope.append(text);
+                    // Should move to the end
+                    self.buffer.cursor.moveRight();
                 }
             },
             else => {},
         }
     }
 
-    /// Draw our current state
-    pub fn draw(self: *MyApp, msg: []const u8) !void {
+    fn graphemesBeforeCursor(self: *const Maurizio, msg: []const u8) usize {
+        var msg_iter = self.vx.unicode.graphemeIterator(msg);
+        var i: usize = 0;
+        while (msg_iter.next()) |_| {
+            i += 1;
+        }
+        return i;
+    }
 
+    /// Draw our current state
+    pub fn draw(self: *Maurizio, msg: []const u8) !void {
         // Window is a bounded area with a view to the screen. You cannot draw outside of a window's
         // bounds. They are light structures, not intended to be stored.
         const win = self.vx.window();
+
+        if (win.width == 0) return;
+
+        // std.debug.print("CURSOR\n: {any}", .{self.cursor});
+        // const cursor_idx = self.graphemesBeforeCursor(msg);
+        // self.cursor.x = cursor_idx;
+        // self.cursor.y = 0;
 
         // Clearing the window has the effect of setting each cell to it's "default" state. Vaxis
         // applications typicallyy will be immediate mode, and you will redraw your entire
@@ -206,18 +239,18 @@ const MyApp = struct {
         // be changing that as well
         self.vx.setMouseShape(.default);
 
-        const maurizio_color: usize = 233;
+        // const maurizio_color: usize = 233;
 
-        // Create a style
-        const style: vaxis.Style = .{
-            .fg = .{ .index = maurizio_color },
-        };
+        // // Create a style
+        // const style: vaxis.Style = .{
+        //     .fg = .{ .index = maurizio_color },
+        // };
 
         const logo_height = 6;
         const logo_width = 20;
         // Create a bordered child window
         const logo_child = win.child(.{
-            .border = .{ .where = .all, .style = style },
+            // .border = .{ .where = .all, .style = style },
             .x_off = win.width - logo_width,
             .y_off = win.height - logo_height,
             .width = .{ .limit = logo_width },
@@ -244,30 +277,9 @@ const MyApp = struct {
             }
         }
 
-        // mouse events are much easier to handle in the draw cycle. Windows have a helper method to
-        // determine if the event occurred in the target window. This method returns null if there
-        // is no mouse event, or if it occurred outside of the window
-        // const style: vaxis.Style = if (child.hasMouse(self.mouse)) |_| blk: {
-        //     // We handled the mouse event, so set it to null
-        //     self.mouse = null;
-        //     self.vx.setMouseShape(.pointer);
-        //     break :blk .{ .reverse = true };
-        // } else .{};
-
-        // Print a text segment to the screen. This is a helper function which iterates over the
-        // text field for graphemes. Alternatively, you can implement your own print functions and
-        // use the writeCell API.
-        // _ = try child.printSegment(.{ .text = msg, .style = style }, .{});
-
-        // Draw the text input in the child window
-        // try self.text_input.draw(child);
-
         const child = win.initChild(0, 0, .expand, .expand);
 
         var msg_iter = self.vx.unicode.graphemeIterator(msg);
-        // var row: usize = 0;
-        // var col: usize = 0;
-        // var i: usize = 0;
 
         // const ellipsis: Cell.Character = .{ .grapheme = "…", .width = 1 };
 
@@ -275,10 +287,8 @@ const MyApp = struct {
         var pos: Pos = .{};
         var byte_index: usize = 0;
 
-        // for (msg_iter.items(.len), msg_iter.items(.offset), 0..) |g_len, g_offset, index| {
         var index: usize = 0;
         while (msg_iter.next()) |grapheme| {
-            defer index += 1;
             const cluster = msg[grapheme.offset..][0..grapheme.len];
             defer byte_index += cluster.len;
 
@@ -303,57 +313,12 @@ const MyApp = struct {
                     .width = width,
                 },
             });
+
+            index += 1;
+            if (index == self.buffer.cursor.grapheme_idx) self.buffer.cursor.x = pos.x;
         }
 
-        // while (msg_iter.next()) |grapheme| {
-        //     const g = grapheme.bytes(msg);
-        //     const w = child.gwidth(g);
-        //     // TODO this need to take rows into account :/
-        //     if (col + w >= child.width) {
-        //         child.writeCell(child.width - 1, row, .{ .char = ellipsis });
-        //         break;
-        //     }
-        //     // if (std.mem.eql(u8, g, "\n")) {
-        //     if (grapheme.code == '\n') {
-        //         // row += 1;
-        //         // col = 0;
-        //         row = 0;
-        //         child.writeCell(col, row, .{
-        //             .char = .{
-        //                 .grapheme = "@",
-        //                 .width = w,
-        //             },
-        //         });
-        //     } else {
-        //         child.writeCell(col, row, .{
-        //             .char = .{
-        //                 .grapheme = g,
-        //                 .width = w,
-        //             },
-        //         });
-        //         col += w;
-        //         i += 1;
-        //     }
-        // }
-
-        // const child = win.initChild(0, 0, .expand, .expand);
-        // var row: usize = 0;
-        // var current_col: usize = 0;
-        // for (msg, 0..) |_, i| {
-        //     const cell: Cell = .{
-        //         .char = .{ .grapheme = msg[i .. i + 1] },
-        //         .style = .{
-        //             .fg = .{ .index = 233 },
-        //         },
-        //     };
-        //     if (std.mem.eql(u8, msg[i .. i + 1], "\n")) {
-        //         row += 1;
-        //         current_col = 0;
-        //     } else {
-        //         child.writeCell(current_col, row, cell);
-        //         current_col += 1;
-        //     }
-        // }
+        win.showCursor(self.buffer.cursor.x, self.buffer.cursor.y);
 
         // IS THIS USLESS?
         // try self.vx.render(self.tty.anyWriter());
@@ -374,7 +339,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Initialize our application
-    var app = try MyApp.init(allocator);
+    var app = try Maurizio.init(allocator);
     defer app.deinit();
 
     // Run the application
