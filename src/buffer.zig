@@ -37,6 +37,19 @@ const Cursor = struct {
     }
 };
 
+// An attempt at keeping track of how long all lines are.
+// TODO I think a better idea is to create the rows and then use them to print as well.
+// Need to figure out how to handle this.
+const Line = struct {
+    allocator: std.mem.Allocator,
+    rows: std.ArrayList(usize),
+
+    // pub fn init(allocator: std.mem.Allocator) !RowsMeta {
+    //   const rows = std.ArrayList.init(allocator);
+
+    // }
+};
+
 pub const Buffer = struct {
     allocator: std.mem.Allocator,
     rope: *Rope,
