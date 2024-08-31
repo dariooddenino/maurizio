@@ -157,6 +157,7 @@ const MyApp = struct {
             .key_press => |key| {
                 if (key.matches(Key.backspace, .{})) {
                     // self.deleteBeforeCursor();
+                    try self.rope.deleteLast();
                 } else if (key.matches(Key.delete, .{}) or key.matches('d', .{ .ctrl = true })) {
                     // self.deleteAfterCursor();
                 } else if (key.matches(Key.left, .{}) or key.matches('b', .{ .ctrl = true })) {
@@ -179,6 +180,8 @@ const MyApp = struct {
                     // self.deleteWordBefore();
                 } else if (key.matches('d', .{ .alt = true })) {
                     // self.deleteWordAfter();
+                } else if (key.matches(Key.enter, .{})) {
+                    try self.rope.append("\n");
                 } else if (key.text) |text| {
                     try self.rope.append(text);
                 }
@@ -279,8 +282,10 @@ const MyApp = struct {
             const cluster = msg[grapheme.offset..][0..grapheme.len];
             defer byte_index += cluster.len;
 
+            const new_line = "\n";
+
             // Why isn't the new line char working? :/
-            if (std.mem.eql(u8, cluster, "1")) {
+            if (std.mem.eql(u8, cluster, new_line)) {
                 if (index == msg.len - 1) {
                     break;
                 }

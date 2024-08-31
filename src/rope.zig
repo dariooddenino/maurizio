@@ -67,6 +67,13 @@ pub const Rope = struct {
         }
     }
 
+    /// Deletes the last character in the Rope.
+    pub fn deleteLast(self: *Rope) !void {
+        if (self.root.size > 0) {
+            try self.delete(self.root.size - 1, 1);
+        }
+    }
+
     /// Convenience function to prepend a string in the Rope
     pub fn prepend(self: *Rope, string: []const u8) !void {
         try self.insert(string, 0);
