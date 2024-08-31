@@ -23,7 +23,7 @@ pub const std_options: std.Options = .{
 
 /// Tagged union of all events our application will handle. These can be generated
 /// by Vaxis or your own custom events
-const Event = union(enum) {
+pub const Event = union(enum) {
     key_press: Key,
     key_release: Key,
     mouse: vaxis.Mouse,
@@ -72,6 +72,7 @@ const Maurizio = struct {
         // to clean up memory, or pass null if your application is shutting down
         // and let the OS clean up the memory
         self.buffer.deinit();
+        self.allocator.destroy(self.buffer);
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
     }
@@ -114,9 +115,7 @@ const Maurizio = struct {
             }
 
             // Draw our application after handling events
-            const content = try self.buffer.rope.getValue();
-            defer self.allocator.free(content);
-            try self.draw(content);
+            try self.draw();
 
             // It's best to use a buffered writer for the render method. TTY provides one, but you
             // may use your own. The provided bufferedWriter has a buffer size of 4096
@@ -143,67 +142,12 @@ const Maurizio = struct {
                 } else if (key.matches('l', .{ .ctrl = true })) {
                     self.vx.queueRefresh();
                 } else {
-                    try self.handleKey(.{ .key_press = key });
+                    try self.buffer.handleKey(.{ .key_press = key });
+                    // try self.handleKey(.{ .key_press = key });
                 }
             },
             .mouse => |mouse| self.mouse = mouse,
             .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
-            else => {},
-        }
-    }
-
-    fn handleKey(self: *Maurizio, event: Event) !void {
-        switch (event) {
-            .key_press => |key| {
-                if (key.matches(Key.backspace, .{})) {
-                    // self.deleteBeforeCursor();
-                    // To delete properly I have to to go from .{x, y} to pos, which I can't do right now.
-                    try self.buffer.rope.deleteLast();
-                    self.buffer.cursor.moveLeft();
-                } else if (key.matches(Key.delete, .{}) or key.matches('d', .{ .ctrl = true })) {
-                    // self.deleteAfterCursor();
-                } else if (key.matches(Key.left, .{}) or key.matches('b', .{ .ctrl = true })) {
-                    self.buffer.cursor.moveLeft();
-                } else if (key.matches(Key.right, .{}) or key.matches('f', .{ .ctrl = true })) {
-                    self.buffer.cursor.moveRight();
-                } else if (key.matches(Key.up, .{})) {
-                    self.buffer.cursor.moveUp();
-                } else if (key.matches(Key.down, .{})) {
-                    self.buffer.cursor.moveDown();
-                } else if (key.matches('a', .{ .ctrl = true }) or key.matches(Key.home, .{})) {
-                    // self.buf.moveGapLeft(self.buf.firstHalf().len);
-                } else if (key.matches('e', .{ .ctrl = true }) or key.matches(Key.end, .{})) {
-                    // self.buf.moveGapRight(self.buf.secondHalf().len);
-                } else if (key.matches('k', .{ .ctrl = true })) {
-                    // self.deleteToEnd();
-                } else if (key.matches('u', .{ .ctrl = true })) {
-                    // self.deleteToStart();
-                } else if (key.matches('b', .{ .alt = true }) or key.matches(Key.left, .{ .alt = true })) {
-                    // self.moveBackwardWordwise();
-                } else if (key.matches('f', .{ .alt = true }) or key.matches(Key.right, .{ .alt = true })) {
-                    // self.moveForwardWordwise();
-                } else if (key.matches('w', .{ .ctrl = true }) or key.matches(Key.backspace, .{ .alt = true })) {
-                    // self.deleteWordBefore();
-                } else if (key.matches('d', .{ .alt = true })) {
-                    // self.deleteWordAfter();
-                } else if (key.matches('s', .{ .ctrl = true })) {
-                    const file = try std.fs.cwd().createFile(
-                        "test_output.md",
-                        .{},
-                    );
-                    defer file.close();
-                    const content = try self.buffer.rope.getValue();
-                    defer self.allocator.free(content);
-                    _ = try file.writeAll(content);
-                } else if (key.matches(Key.enter, .{})) {
-                    try self.buffer.rope.append("\n");
-                    self.buffer.cursor.toNewLine();
-                } else if (key.text) |text| {
-                    try self.buffer.rope.append(text);
-                    // Should move to the end
-                    self.buffer.cursor.moveRight();
-                }
-            },
             else => {},
         }
     }
@@ -218,7 +162,7 @@ const Maurizio = struct {
     }
 
     /// Draw our current state
-    pub fn draw(self: *Maurizio, msg: []const u8) !void {
+    pub fn draw(self: *Maurizio) !void {
         // Window is a bounded area with a view to the screen. You cannot draw outside of a window's
         // bounds. They are light structures, not intended to be stored.
         const win = self.vx.window();
@@ -278,45 +222,7 @@ const Maurizio = struct {
         }
 
         const child = win.initChild(0, 0, .expand, .expand);
-
-        var msg_iter = self.vx.unicode.graphemeIterator(msg);
-
-        // const ellipsis: Cell.Character = .{ .grapheme = "…", .width = 1 };
-
-        const Pos = struct { x: usize = 0, y: usize = 0 };
-        var pos: Pos = .{};
-        var byte_index: usize = 0;
-
-        var index: usize = 0;
-        while (msg_iter.next()) |grapheme| {
-            const cluster = msg[grapheme.offset..][0..grapheme.len];
-            defer byte_index += cluster.len;
-
-            const new_line = "\n";
-
-            // Why isn't the new line char working? :/
-            if (std.mem.eql(u8, cluster, new_line)) {
-                if (index == msg.len - 1) {
-                    break;
-                }
-                pos.y += 1;
-                pos.x = 0;
-                continue;
-            }
-
-            const width = child.gwidth(cluster);
-            defer pos.x +|= width;
-
-            child.writeCell(pos.x, pos.y, .{
-                .char = .{
-                    .grapheme = cluster,
-                    .width = width,
-                },
-            });
-
-            index += 1;
-            if (index == self.buffer.cursor.grapheme_idx) self.buffer.cursor.x = pos.x;
-        }
+        try self.buffer.draw(self.vx, child);
 
         win.showCursor(self.buffer.cursor.x, self.buffer.cursor.y);
 
