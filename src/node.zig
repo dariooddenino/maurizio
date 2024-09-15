@@ -79,6 +79,48 @@ const Node = struct {
         }
     }
 
+    /// Inserts a string at the given position
+    // pub fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
+    // }
+
+    // Splits the node.
+    // NOTE: what did I mean with "the original one is left untouched?"
+    fn split(self: *Node, allocator: std.mem.Allocator, max_leaf_size: usize, pos: usize) !struct { ?*Node, ?*Node } {
+        if (self.is_leaf) {
+            if (pos == 0) {
+                const leaf = try allocator.create(Node);
+                leaf.* = self.*;
+                return .{
+                    null,
+                    leaf,
+                };
+            }
+            if (pos == self.size) {
+                const leaf = try allocator.create(Node);
+                leaf.* = self.*;
+                return .{
+                    leaf,
+                    null,
+                };
+            }
+
+            const left_content, const right_content = blk: {
+                if (self.value) |value| {
+                    break :blk .{ value[0..pos], value[pos..] };
+                } else {
+                    break :blk .{ "", "" };
+                }
+            };
+
+            const left = try Node.createLeaf(allocator, max_leaf_size, left_content);
+            const right = try Node.createLeaf(allocator, max_leaf_size, right_content);
+
+            return .{ left, right };
+        } else {
+            // TODO branch side
+        }
+    }
+
     /// Saves in the buffer the value of the Node in the given range.
     fn getValueRange(self: Node, buffer: *std.ArrayList(u8), start: usize, end: usize) !void {
         if (self.is_leaf) {
