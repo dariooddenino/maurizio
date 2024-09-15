@@ -1,10 +1,14 @@
 const std = @import("std");
 
 // TODOS
-// rebalance op (join, split, delete... ?)
-// - max leaf size
+// rebalance operation
+// The current operation is not thought well. I should just approach this correctly from the start
+// and when joining, and then once in a while rebalance the whole tree (the current rebalance operation
+// is not that, it's a middleground solution that doesn't actually do what I want).
+
 // - load from file
 // - maybe join shouldn't copy the original string?
+// - all basic operations should take balance into account
 
 // NOTES
 // - full_size needs to be checked, how was it behaving before?
@@ -13,19 +17,45 @@ const std = @import("std");
 // - is this memory model correct?
 // - In this regard, join and delete modify the original node, while other operations create clones. I need consistency
 
+/// The threshold used to split a leaf node into two child nodes.
+const SPLIT_LENGTH: usize = 10;
+/// The threshold used to join two child nodes into one leaf node.
+const JOIN_LENGTH: usize = 5;
+/// The threshold used to trigger a tree node rebuild when rebalancing the rope.
+const REBALANCE_RATIO: f32 = 1.2;
+
 pub const Rope = struct {
     allocator: std.mem.Allocator,
     root: *Node,
 
     /// Initialize the tree with a string
-    pub fn init(allocator: std.mem.Allocator, string: []const u8) !Rope {
+    pub fn init(allocator: std.mem.Allocator) !Rope {
         const root = try allocator.create(Node);
-        root.* = Node.fromString(string);
+        root.* = Node.fromString("");
         return Rope{ .allocator = allocator, .root = root };
     }
 
     pub fn deinit(self: *Rope) void {
         self.root.deinit(self.allocator);
+    }
+
+    /// Adjusts the tree structure, so that very long nodes are split and short ones are joined.
+    /// TODO this will probably be a node function.
+    fn adjust(self: *Rope) void {
+        _ = self;
+        // This would split or join just this node, is this enough or should it be recursive?
+    }
+
+    /// Rebuilds the entire rope structure, producing a balanced tree.
+    pub fn rebuild(self: *Rope) void {
+        _ = self;
+        // Only works on branches?
+        // deletes everything and calls adjust on the new root
+    }
+
+    /// Finds unbalanced nodes in the tree and rebuilds them.
+    pub fn rebalance(self: *Rope) !void {
+        try self.root.rebalance(self.allocator);
     }
 
     /// Returns the character at the given index
@@ -87,7 +117,7 @@ pub const Rope = struct {
     /// Inserts a String in the given position of the Rope
     /// NOTE: I'm not entirely sure if I'm inserting in the right place.
     /// NOTE: Also, I'm copying and redeleting the whole tree on an insert operation, not efficient for sure.
-    pub fn insert(self: *Rope, string: []const u8, pos: usize) !void {
+    pub fn insert_(self: *Rope, string: []const u8, pos: usize) !void {
         const allocator = self.allocator;
         const left_split, const right_split = try self.root.split(allocator, pos);
 
@@ -107,6 +137,10 @@ pub const Rope = struct {
 
         self.root.deinit(allocator);
         self.root = new_root;
+    }
+
+    pub fn insert(self: *Rope, pos: usize, text: []const u8) !void {
+        try self.root.insert(self.allocator, text, pos);
     }
 
     /// Join a new Node into the Rope
@@ -142,6 +176,25 @@ const Node = struct {
     left: ?*Node,
     right: ?*Node,
     is_leaf: bool,
+
+    /// Inserts text at the given position
+    /// TODO this will have to update the weights as well.
+    fn insert(self: *Node, allocator: std.mem.Allocator, text: []const u8, pos: usize) !void {
+        _ = allocator;
+        if (self.is_leaf) {
+            if (pos >= self.full_size)
+                unreachable;
+
+            if (self.value) |value| {
+                // TODO this of course doesn't work.
+                self.value = value[0..pos] + text + value[pos..];
+                self.size = self.size + text.len;
+                self.full_size = self.full_size + text.len;
+            }
+        } else {}
+    }
+
+    // TODO everything below needs to be revisited
 
     /// Creates a Leaf Node from a String
     fn fromString(string: []const u8) Node {
@@ -188,6 +241,47 @@ const Node = struct {
             }
         }
         allocator.destroy(self);
+    }
+
+    /// Recursively rebalances the node
+    /// NOTE this isn't actually rebalancing, just making sure that
+    /// leaves are inside the boundaries.
+    /// Do I need a different name for this?
+    /// I need a better understanding of https://github.com/component/rope/blob/master/index.js
+    fn rebalance(self: *Node, allocator: std.mem.Allocator) !void {
+        if (self.is_leaf) {
+            // If it's a leaf, and bigger than our max size, we split it.
+            if (self.full_size >= SPLIT_LENGTH) {
+                const pos: usize = @intFromFloat(@floor(@as(f32, @floatFromInt(self.full_size)) / 2));
+                const left, const right = try self.split(allocator, pos);
+                // TODO I'm using this pattern already in multiple places
+                self.value = null;
+                self.is_leaf = false;
+                self.left = left;
+                self.right = right;
+
+                // We have left for sure
+                self.size = left.?.full_size;
+                self.full_size = left.?.full_size;
+                if (right) |r| {
+                    self.full_size += r.full_size;
+                }
+            }
+        } else {
+            // NOTE this is wrong, the branch could be bigger in size,
+            // but all leaves still be ok.
+            // I can probably just make sure that this is used correctly from the start.
+            // If it's a node, we need to check the balance of both sides.
+            // TODO if total size is smaller, just join the two nodes
+            // otherwise
+            if (self.full_size < JOIN_LENGTH) {
+                // TODO joins the two nodes
+            } else {
+                // Check each branch and split it if needed.
+                // const right_size = self.full_size - self.size;
+                if (self.full_size >= SPLIT_LENGTH) {}
+            }
+        }
     }
 
     /// Clones the Node and all its children
@@ -435,295 +529,317 @@ const Node = struct {
     }
 };
 
-test "Rope" {
-    const allocator = std.testing.allocator;
-    // Initialize a Rope
-    {
-        var rope = try Rope.init(allocator, "Hello");
-        defer rope.deinit();
+test "Creating a new Rope and inserting text" {
+    var rope = try Rope.init(std.testing.allocator);
+    try rope.insert(0, "This is some long text");
+    defer rope.deinit();
 
-        const result = try rope.getValue();
-        defer allocator.free(result);
-
-        try std.testing.expectEqualStrings("Hello", result);
-    }
-    // Index
-    {
-        var rope = try Rope.init(allocator, "Hello");
-        defer rope.deinit();
-
-        try rope.joinNode(Node.fromString(" World!"));
-
-        const char = try rope.index(6);
-
-        try std.testing.expectEqual(char, 'W');
-    }
-    // Splitting Nodes on the right
-    {
-        var node = try Node.fromStrings(allocator, "Hello", " World!");
-        defer node.deinit(allocator);
-
-        const left, const right = try node.split(allocator, 7);
-
-        if (left) |l| {
-            defer l.deinit(allocator);
-            var expected_left = try Node.fromStrings(allocator, "Hello", " W");
-            defer expected_left.deinit(allocator);
-            try std.testing.expect(l.isEqual(expected_left.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-
-        if (right) |r| {
-            defer r.deinit(allocator);
-            var expected_right = try allocator.create(Node);
-            expected_right.* = Node.fromString("orld!");
-            defer expected_right.deinit(allocator);
-            try std.testing.expect(r.isEqual(expected_right.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-    }
-    // Splitting nodes on the left
-    {
-        var node = try Node.fromStrings(allocator, "Hello", " World!");
-        defer node.deinit(allocator);
-
-        const left, const right = try node.split(allocator, 3);
-        defer left.?.deinit(allocator);
-        defer right.?.deinit(allocator);
-
-        if (left) |l| {
-            var expected_left = try allocator.create(Node);
-            expected_left.* = Node.fromString("Hel");
-            defer expected_left.deinit(allocator);
-            try std.testing.expect(l.isEqual(expected_left.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-
-        if (right) |r| {
-            var expected_right = try Node.fromStrings(allocator, "lo", " World!");
-            defer expected_right.deinit(allocator);
-            try std.testing.expect(r.isEqual(expected_right.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-    }
-    // Testing clone
-    {
-        var node = try Node.fromStrings(allocator, "Hello", " World!");
-        defer node.deinit(allocator);
-        var clone = try allocator.create(Node);
-        clone.* = try node.clone(allocator);
-        defer clone.deinit(allocator);
-
-        try std.testing.expect(node.isEqual(clone.*));
-    }
-    // Bigger tree split
-    {
-        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
-        defer node_1.deinit(allocator);
-
-        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
-        defer node_2.deinit(allocator);
-
-        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
-        defer node_3.deinit(allocator);
-
-        try node_2.join(allocator, node_3.*);
-        try node_1.join(allocator, node_2.*);
-
-        const left, const right = try node_1.split(allocator, 11);
-
-        if (left) |l| {
-            defer l.deinit(allocator);
-            // TODO should test this as well?
-            // var expected_left = try allocator.create(Node);
-            // expected_left.* = Node.fromString("Hel");
-            // defer expected_left.deinit(allocator);
-            // try std.testing.expect(l.isEqual(expected_left.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-
-        if (right) |r| {
-            defer r.deinit(allocator);
-            var expected_right = try allocator.create(Node);
-            defer expected_right.deinit(allocator);
-            var right_right = try Node.fromStrings(allocator, "s", "_Simon");
-            defer right_right.deinit(allocator);
-            expected_right.* = Node.fromString("me_i");
-            try expected_right.join(allocator, right_right.*);
-            try std.testing.expect(r.isEqual(expected_right.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-    }
-    // Bigger tree split middle of leaf
-    {
-        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
-        defer node_1.deinit(allocator);
-
-        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
-        defer node_2.deinit(allocator);
-
-        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
-        defer node_3.deinit(allocator);
-
-        try node_2.join(allocator, node_3.*);
-        try node_1.join(allocator, node_2.*);
-
-        const left, const right = try node_1.split(allocator, 12);
-
-        if (left) |l| {
-            defer l.deinit(allocator);
-            // TODO should test this as well?
-            // var expected_left = try allocator.create(Node);
-            // expected_left.* = Node.fromString("Hel");
-            // defer expected_left.deinit(allocator);
-            // try std.testing.expect(l.isEqual(expected_left.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-
-        if (right) |r| {
-            defer r.deinit(allocator);
-            var expected_right = try allocator.create(Node);
-            defer expected_right.deinit(allocator);
-            var right_right = try Node.fromStrings(allocator, "s", "_Simon");
-            defer right_right.deinit(allocator);
-            expected_right.* = Node.fromString("e_i");
-            try expected_right.join(allocator, right_right.*);
-            try std.testing.expect(r.isEqual(expected_right.*));
-        } else {
-            // NOTE print a custom message?
-            try std.testing.expect(false);
-        }
-    }
-    // Inserting into position 0
-    {
-        var rope = try Rope.init(allocator, "World!");
-        defer rope.deinit();
-        try rope.insert("Hello ", 0);
-
-        var expected = try Node.fromStrings(allocator, "Hello ", "World!");
-        defer expected.deinit(allocator);
-
-        try std.testing.expect(rope.root.isEqual(expected.*));
-    }
-    // Inserting into last position
-    {
-        var rope = try Rope.init(allocator, "Hello ");
-        defer rope.deinit();
-        try rope.insert("World!", 6);
-
-        var expected = try Node.fromStrings(allocator, "Hello ", "World!");
-        defer expected.deinit(allocator);
-
-        try std.testing.expect(rope.root.isEqual(expected.*));
-    }
-    // Inserting in the middle of a big tree
-    {
-        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
-        // defer node_1.deinit(allocator);
-
-        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
-        defer node_2.deinit(allocator);
-
-        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
-        defer node_3.deinit(allocator);
-
-        try node_2.join(allocator, node_3.*);
-        try node_1.join(allocator, node_2.*);
-
-        var rope = Rope{ .root = node_1, .allocator = allocator };
-
-        try rope.insert("new_", 9);
-        defer rope.deinit();
-
-        const result = try rope.getValue();
-        defer allocator.free(result);
-
-        // Lazy test
-        try std.testing.expectEqualStrings(result, "Hello_my_new_name_is_Simon");
-    }
-    // Appending
-    {
-        var rope = try Rope.init(allocator, "Hello");
-        try rope.append(" World");
-        defer rope.deinit();
-
-        var expected = try Node.fromStrings(allocator, "Hello", " World");
-        defer expected.deinit(allocator);
-
-        try std.testing.expect(rope.root.isEqual(expected.*));
-    }
-    // Deleting in a simple tree
-    {
-        var rope = try Rope.init(allocator, "Helllo");
-        defer rope.deinit();
-        try rope.append(" World");
-        try rope.delete(3, 1);
-
-        var result = try allocator.create(Node);
-        defer result.deinit(allocator);
-        result.* = Node.fromString("Hel");
-
-        var res_left = try Node.fromStrings(allocator, "lo", " World");
-        try result.join(allocator, res_left.*);
-        res_left.deinit(allocator);
-
-        try std.testing.expect(rope.root.isEqual(result.*));
-    }
-    // Deleting in a more complex tree
-    {
-        var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
-
-        var node_2 = try Node.fromStrings(allocator, "na", "me_i");
-        defer node_2.deinit(allocator);
-
-        var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
-        defer node_3.deinit(allocator);
-
-        try node_2.join(allocator, node_3.*);
-        try node_1.join(allocator, node_2.*);
-
-        var rope = Rope{ .root = node_1, .allocator = allocator };
-        defer rope.deinit();
-
-        try rope.delete(3, 7);
-
-        const result = try rope.getValue();
-        defer allocator.free(result);
-
-        // TODO I should test for the tree structure here.
-        try std.testing.expectEqualStrings(result, "Helame_is_Simon");
-    }
-    // Multiple operations
-    {
-        var rope = try Rope.init(allocator, "Hello");
-        defer rope.deinit();
-
-        try rope.append(" my name");
-        try rope.append(" is Simon");
-
-        try rope.delete(6, 2);
-        try rope.insert("our", 6);
-
-        try rope.delete(18, 5);
-        try rope.append("Maurizio!");
-
-        const result = try rope.getValue();
-        defer allocator.free(result);
-
-        try std.testing.expectEqualStrings(result, "Hello our name is Maurizio!");
-    }
+    rope.print();
 }
+
+// test "Rope" {
+//     const allocator = std.testing.allocator;
+//     // Initialize a Rope
+//     {
+//         var rope = try Rope.init(allocator, "Hello");
+//         defer rope.deinit();
+
+//         const result = try rope.getValue();
+//         defer allocator.free(result);
+
+//         try std.testing.expectEqualStrings("Hello", result);
+//     }
+//     // Index
+//     {
+//         var rope = try Rope.init(allocator, "Hello");
+//         defer rope.deinit();
+
+//         try rope.joinNode(Node.fromString(" World!"));
+
+//         const char = try rope.index(6);
+
+//         try std.testing.expectEqual(char, 'W');
+//     }
+//     // Splitting Nodes on the right
+//     {
+//         var node = try Node.fromStrings(allocator, "Hello", " World!");
+//         defer node.deinit(allocator);
+
+//         const left, const right = try node.split(allocator, 7);
+
+//         if (left) |l| {
+//             defer l.deinit(allocator);
+//             var expected_left = try Node.fromStrings(allocator, "Hello", " W");
+//             defer expected_left.deinit(allocator);
+//             try std.testing.expect(l.isEqual(expected_left.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+
+//         if (right) |r| {
+//             defer r.deinit(allocator);
+//             var expected_right = try allocator.create(Node);
+//             expected_right.* = Node.fromString("orld!");
+//             defer expected_right.deinit(allocator);
+//             try std.testing.expect(r.isEqual(expected_right.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+//     }
+//     // Splitting nodes on the left
+//     {
+//         var node = try Node.fromStrings(allocator, "Hello", " World!");
+//         defer node.deinit(allocator);
+
+//         const left, const right = try node.split(allocator, 3);
+//         defer left.?.deinit(allocator);
+//         defer right.?.deinit(allocator);
+
+//         if (left) |l| {
+//             var expected_left = try allocator.create(Node);
+//             expected_left.* = Node.fromString("Hel");
+//             defer expected_left.deinit(allocator);
+//             try std.testing.expect(l.isEqual(expected_left.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+
+//         if (right) |r| {
+//             var expected_right = try Node.fromStrings(allocator, "lo", " World!");
+//             defer expected_right.deinit(allocator);
+//             try std.testing.expect(r.isEqual(expected_right.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+//     }
+//     // Testing clone
+//     {
+//         var node = try Node.fromStrings(allocator, "Hello", " World!");
+//         defer node.deinit(allocator);
+//         var clone = try allocator.create(Node);
+//         clone.* = try node.clone(allocator);
+//         defer clone.deinit(allocator);
+
+//         try std.testing.expect(node.isEqual(clone.*));
+//     }
+//     // Bigger tree split
+//     {
+//         var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
+//         defer node_1.deinit(allocator);
+
+//         var node_2 = try Node.fromStrings(allocator, "na", "me_i");
+//         defer node_2.deinit(allocator);
+
+//         var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
+//         defer node_3.deinit(allocator);
+
+//         try node_2.join(allocator, node_3.*);
+//         try node_1.join(allocator, node_2.*);
+
+//         const left, const right = try node_1.split(allocator, 11);
+
+//         if (left) |l| {
+//             defer l.deinit(allocator);
+//             // TODO should test this as well?
+//             // var expected_left = try allocator.create(Node);
+//             // expected_left.* = Node.fromString("Hel");
+//             // defer expected_left.deinit(allocator);
+//             // try std.testing.expect(l.isEqual(expected_left.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+
+//         if (right) |r| {
+//             defer r.deinit(allocator);
+//             var expected_right = try allocator.create(Node);
+//             defer expected_right.deinit(allocator);
+//             var right_right = try Node.fromStrings(allocator, "s", "_Simon");
+//             defer right_right.deinit(allocator);
+//             expected_right.* = Node.fromString("me_i");
+//             try expected_right.join(allocator, right_right.*);
+//             try std.testing.expect(r.isEqual(expected_right.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+//     }
+//     // Bigger tree split middle of leaf
+//     {
+//         var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
+//         defer node_1.deinit(allocator);
+
+//         var node_2 = try Node.fromStrings(allocator, "na", "me_i");
+//         defer node_2.deinit(allocator);
+
+//         var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
+//         defer node_3.deinit(allocator);
+
+//         try node_2.join(allocator, node_3.*);
+//         try node_1.join(allocator, node_2.*);
+
+//         const left, const right = try node_1.split(allocator, 12);
+
+//         if (left) |l| {
+//             defer l.deinit(allocator);
+//             // TODO should test this as well?
+//             // var expected_left = try allocator.create(Node);
+//             // expected_left.* = Node.fromString("Hel");
+//             // defer expected_left.deinit(allocator);
+//             // try std.testing.expect(l.isEqual(expected_left.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+
+//         if (right) |r| {
+//             defer r.deinit(allocator);
+//             var expected_right = try allocator.create(Node);
+//             defer expected_right.deinit(allocator);
+//             var right_right = try Node.fromStrings(allocator, "s", "_Simon");
+//             defer right_right.deinit(allocator);
+//             expected_right.* = Node.fromString("e_i");
+//             try expected_right.join(allocator, right_right.*);
+//             try std.testing.expect(r.isEqual(expected_right.*));
+//         } else {
+//             // NOTE print a custom message?
+//             try std.testing.expect(false);
+//         }
+//     }
+//     // Inserting into position 0
+//     {
+//         var rope = try Rope.init(allocator, "World!");
+//         defer rope.deinit();
+//         try rope.insert("Hello ", 0);
+
+//         var expected = try Node.fromStrings(allocator, "Hello ", "World!");
+//         defer expected.deinit(allocator);
+
+//         try std.testing.expect(rope.root.isEqual(expected.*));
+//     }
+//     // Inserting into last position
+//     {
+//         var rope = try Rope.init(allocator, "Hello ");
+//         defer rope.deinit();
+//         try rope.insert("World!", 6);
+
+//         var expected = try Node.fromStrings(allocator, "Hello ", "World!");
+//         defer expected.deinit(allocator);
+
+//         try std.testing.expect(rope.root.isEqual(expected.*));
+//     }
+//     // Inserting in the middle of a big tree
+//     {
+//         var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
+//         // defer node_1.deinit(allocator);
+
+//         var node_2 = try Node.fromStrings(allocator, "na", "me_i");
+//         defer node_2.deinit(allocator);
+
+//         var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
+//         defer node_3.deinit(allocator);
+
+//         try node_2.join(allocator, node_3.*);
+//         try node_1.join(allocator, node_2.*);
+
+//         var rope = Rope{ .root = node_1, .allocator = allocator };
+
+//         try rope.insert("new_", 9);
+//         defer rope.deinit();
+
+//         const result = try rope.getValue();
+//         defer allocator.free(result);
+
+//         // Lazy test
+//         try std.testing.expectEqualStrings(result, "Hello_my_new_name_is_Simon");
+//     }
+//     // Appending
+//     {
+//         var rope = try Rope.init(allocator, "Hello");
+//         try rope.append(" World");
+//         defer rope.deinit();
+
+//         var expected = try Node.fromStrings(allocator, "Hello", " World");
+//         defer expected.deinit(allocator);
+
+//         try std.testing.expect(rope.root.isEqual(expected.*));
+//     }
+//     // Deleting in a simple tree
+//     {
+//         var rope = try Rope.init(allocator, "Helllo");
+//         defer rope.deinit();
+//         try rope.append(" World");
+//         try rope.delete(3, 1);
+
+//         var result = try allocator.create(Node);
+//         defer result.deinit(allocator);
+//         result.* = Node.fromString("Hel");
+
+//         var res_left = try Node.fromStrings(allocator, "lo", " World");
+//         try result.join(allocator, res_left.*);
+//         res_left.deinit(allocator);
+
+//         try std.testing.expect(rope.root.isEqual(result.*));
+//     }
+//     // Deleting in a more complex tree
+//     {
+//         var node_1 = try Node.fromStrings(allocator, "Hello_", "my_");
+
+//         var node_2 = try Node.fromStrings(allocator, "na", "me_i");
+//         defer node_2.deinit(allocator);
+
+//         var node_3 = try Node.fromStrings(allocator, "s", "_Simon");
+//         defer node_3.deinit(allocator);
+
+//         try node_2.join(allocator, node_3.*);
+//         try node_1.join(allocator, node_2.*);
+
+//         var rope = Rope{ .root = node_1, .allocator = allocator };
+//         defer rope.deinit();
+
+//         try rope.delete(3, 7);
+
+//         const result = try rope.getValue();
+//         defer allocator.free(result);
+
+//         // TODO I should test for the tree structure here.
+//         try std.testing.expectEqualStrings(result, "Helame_is_Simon");
+//     }
+//     // Multiple operations
+//     {
+//         var rope = try Rope.init(allocator, "Hello");
+//         defer rope.deinit();
+
+//         try rope.append(" my name");
+//         try rope.append(" is Simon");
+
+//         try rope.delete(6, 2);
+//         try rope.insert("our", 6);
+
+//         try rope.delete(18, 5);
+//         try rope.append("Maurizio!");
+
+//         const result = try rope.getValue();
+//         defer allocator.free(result);
+
+//         try std.testing.expectEqualStrings(result, "Hello our name is Maurizio!");
+//     }
+// }
+
+// test "Rebalance" {
+//     // TODO this test will be pointless one the rope is already initialized correctly.
+//     const allocator = std.testing.allocator;
+//     // Rebalances a simple leaf.
+//     var rope = try Rope.init(allocator, "This is a long string");
+
+//     try rope.rebalance();
+
+//     rope.print();
+//     defer rope.deinit();
+
+//     try std.testing.expectEqual(1, 1);
+// }

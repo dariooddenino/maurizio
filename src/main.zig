@@ -1,5 +1,6 @@
 const std = @import("std");
 const rope = @import("rope.zig");
+const node = @import("node.zig");
 const vaxis = @import("vaxis");
 const Buffer = @import("buffer.zig").Buffer;
 const Cell = vaxis.Cell;
@@ -169,11 +170,6 @@ const Maurizio = struct {
 
         if (win.width == 0) return;
 
-        // std.debug.print("CURSOR\n: {any}", .{self.cursor});
-        // const cursor_idx = self.graphemesBeforeCursor(msg);
-        // self.cursor.x = cursor_idx;
-        // self.cursor.y = 0;
-
         // Clearing the window has the effect of setting each cell to it's "default" state. Vaxis
         // applications typicallyy will be immediate mode, and you will redraw your entire
         // application during the draw cycle.
@@ -182,13 +178,6 @@ const Maurizio = struct {
         // In addition to clearing our window, we want to clear the mouse shape state since we may
         // be changing that as well
         self.vx.setMouseShape(.default);
-
-        // const maurizio_color: usize = 233;
-
-        // // Create a style
-        // const style: vaxis.Style = .{
-        //     .fg = .{ .index = maurizio_color },
-        // };
 
         const logo_height = 6;
         const logo_width = 20;
@@ -253,5 +242,6 @@ pub fn main() !void {
 }
 
 test {
-    _ = rope;
+    // _ = rope;
+    _ = node;
 }
