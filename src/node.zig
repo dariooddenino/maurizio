@@ -5,8 +5,7 @@ const Allocator = std.mem.Allocator;
 /// The maximum size a leaf can reach.
 const MAX_LEAF_SIZE: usize = 10;
 /// The L/R imbalance ratio that triggers a rebalace operation.
-/// NOTE: Since I'm always basically growing on the right, I don't think this works very well.
-const REBALANCE_RATIO: f32 = 3;
+const REBALANCE_RATIO: f32 = 1.2;
 
 const Node = struct {
     value: ?[]const u8,
@@ -128,8 +127,9 @@ const Node = struct {
     }
 
     /// Checks whether the Node is unbalanced
+    /// A certain depth is needed before the check is performed.
     fn isUnbalanced(self: Node, rebalance_ratio: f32) bool {
-        return self.getBalance() > rebalance_ratio;
+        return self.depth > 4 and self.getBalance() > rebalance_ratio;
     }
 
     /// Saves in the buffer the whole value of the node
@@ -184,6 +184,7 @@ test "Creating a balanced Node" {
     try std.testing.expectEqual(1, node.getBalance());
 }
 
+// TODO I need more depth in this tree to trigger the unbalance check
 test "Catch an unbalanced Node" {
     const allocator = std.testing.allocator;
 
@@ -196,7 +197,7 @@ test "Catch an unbalanced Node" {
     const root = try Node.createBranch(allocator, leaf1, right);
     defer root.deinit(allocator);
 
-    // root.print(0);
+    root.print(0);
 
     try std.testing.expectEqual(2, root.getBalance());
     try std.testing.expect(root.isUnbalanced(1.5));
