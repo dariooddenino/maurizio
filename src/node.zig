@@ -215,6 +215,34 @@ const Node = struct {
         }
     }
 
+    /// Inserts a String in the given position
+    /// TODO I don't think I can do this? :/
+    /// TODO If there's enough space it shouldn't create a new node.
+    fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
+        // This clones the sub nodes, so we have the original, and two halves copies
+        const left_split, const right_split = try self.split(allocator, max_leaf_size, pos);
+
+        var new_root: *Node = undefined;
+        if (left_split) |left| {
+            new_root = left;
+            const right = try Node.fromText(allocator, max_leaf_size, text);
+            defer right.deinit(allocator);
+            try new_root.join(allocator, right.*);
+        } else {
+            new_root = try Node.fromText(allocator, max_leaf_size, text);
+        }
+
+        if (right_split) |right| {
+            defer right.deinit(allocator);
+            try new_root.join(allocator, right.*);
+        }
+
+        // defer self.deinit(allocator);
+        self.* = new_root.*;
+        // allocator.destroy(new_root);
+        // new_root.deinit(allocator);
+    }
+
     /// Saves in the buffer the value of the Node in the given range.
     fn getValueRange(self: Node, buffer: *std.ArrayList(u8), start: usize, end: usize) !void {
         if (self.is_leaf) {
@@ -339,8 +367,6 @@ test "Catch an unbalanced Node" {
     const root = try Node.createBranch(allocator, leaf6, right4);
     defer root.deinit(allocator);
 
-    // root.print(0);
-
     try std.testing.expectEqual(5, root.getBalance());
     try std.testing.expect(root.isUnbalanced(3));
 }
@@ -355,24 +381,87 @@ test "Splitting and rejoining a Node" {
     const left, const right = try node.split(allocator, 10, 8);
     if (left) |l| {
         if (right) |r| {
-            // TODO check that this works fine
-            // TODO do I have to update any depth when splitting (I think not)
-            // TODO what about the fact that I'm cloning the nodes?
-            // l.print(0);
             try l.join(allocator, r.*);
             defer l.deinit(allocator);
             defer r.deinit(allocator);
-            // r.print(0);
-
-            l.print(0);
 
             var value = std.ArrayList(u8).init(allocator);
             defer value.deinit();
             try l.getValue(&value);
 
+            try std.testing.expectEqual(1, l.getBalance());
             try std.testing.expectEqualStrings(text, value.items);
             return;
         }
     }
     unreachable;
 }
+
+const Foo = struct {
+    next: ?*Foo,
+
+    fn new(allocator: Allocator) !*Foo {
+        const foo = try allocator.create(Foo);
+
+        foo.* = .{
+            .next = null,
+        };
+
+        return foo;
+    }
+
+    fn deinit(self: *Foo, allocator: Allocator) void {
+        if (self.next) |next| {
+            next.deinit(allocator);
+        }
+        allocator.destroy(self);
+    }
+
+    fn bar(self: *Foo, allocator: Allocator) !void {
+        const new_foo = try allocator.create(Foo);
+        new_foo.* = .{
+            .next = null,
+        };
+        self.* = new_foo.*;
+
+        // I've tried various combinations here without luck.
+        self.deinit(allocator);
+        allocator.destroy(new_foo);
+    }
+};
+
+test "foo" {
+    const allocator = std.testing.allocator;
+
+    const foo = try Foo.new(allocator);
+    defer foo.deinit(allocator);
+
+    const foo2 = try Foo.new(allocator);
+    foo.next = foo2;
+
+    try foo.bar(allocator);
+
+    try std.testing.expect(true);
+}
+
+// test "Inserting in a Node" {
+//     const allocator = std.testing.allocator;
+
+//     const text = "Hello, Maurizio!";
+//     // const text = "Hello";
+//     const result_text = "Hello, from Maurizio!";
+//     // const result_text = "fromHello";
+//     const node = try Node.fromText(allocator, 10, text);
+//     defer node.deinit(allocator);
+
+//     try node.insert(allocator, 10, 7, "from ");
+//     // defer res.deinit(allocator);
+
+//     var value = std.ArrayList(u8).init(allocator);
+//     defer value.deinit();
+//     try node.getValue(&value);
+
+//     node.print(0);
+
+//     try std.testing.expectEqualStrings(result_text, value.items);
+// }
