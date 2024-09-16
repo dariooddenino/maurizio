@@ -2,6 +2,9 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+// TODO
+// - use a config object
+
 /// The maximum size a leaf can reach.
 const MAX_LEAF_SIZE: usize = 10;
 /// The L/R imbalance ratio that triggers a rebalace operation.
@@ -83,8 +86,56 @@ const Node = struct {
     // pub fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
     // }
 
-    // Splits the node.
-    // NOTE: what did I mean with "the original one is left untouched?"
+    fn clone(self: Node, allocator: std.mem.Allocator) !Node {
+        var result = self;
+        if (self.left) |left| {
+            const new_left = try allocator.create(Node);
+            new_left.* = try left.clone(allocator);
+            result.left = new_left;
+        }
+        if (self.right) |right| {
+            const new_right = try allocator.create(Node);
+            new_right.* = try right.clone(allocator);
+            result.right = new_right;
+        }
+
+        return result;
+    }
+
+    /// Joins the Node with another one.
+    fn join(self: *Node, allocator: std.mem.Allocator, original_other: Node) !void {
+        const other = try original_other.clone(allocator);
+        if (!self.is_leaf) {
+            if (self.right == null) {
+                const right = try allocator.create(Node);
+                right.* = other;
+                self.right = right;
+                return;
+            }
+        }
+
+        const size = self.full_size;
+        const full_size = self.full_size + other.full_size;
+
+        const left = try allocator.create(Node);
+        const right = try allocator.create(Node);
+
+        left.* = self.*;
+        right.* = other;
+        self.* = Node{
+            .left = left,
+            .right = right,
+            .size = size,
+            .full_size = full_size,
+            .is_leaf = false,
+            .value = null,
+            .depth = @max(left.depth, other.depth) + 1,
+        };
+    }
+
+    /// Splits the node at the given position.
+    /// NOTE: what did I mean with "the original one is left untouched?"
+    /// I might have to look into the fact that I'm cloning the nodes, is it really needed?
     fn split(self: *Node, allocator: std.mem.Allocator, max_leaf_size: usize, pos: usize) !struct { ?*Node, ?*Node } {
         if (self.is_leaf) {
             if (pos == 0) {
@@ -117,7 +168,50 @@ const Node = struct {
 
             return .{ left, right };
         } else {
-            // TODO branch side
+            if (pos >= self.size) {
+                if (self.right) |right| {
+                    const split_left, const split_right = try right.split(allocator, max_leaf_size, pos - self.size);
+                    if (self.left) |left| {
+                        const copy_left = try allocator.create(Node);
+                        copy_left.* = try left.clone(allocator);
+                        if (split_left) |sl| {
+                            defer sl.deinit(allocator);
+                            try copy_left.join(allocator, sl.*);
+                            return .{ copy_left, split_right };
+                        } else {
+                            return .{ copy_left, split_right };
+                        }
+                    } else if (split_left) |sl| {
+                        // If there was no left (possible?) we just add the split as the new left.
+                        return .{ sl, split_right };
+                    } else {
+                        unreachable;
+                    }
+                } else {
+                    return error.OutOfBounds;
+                }
+            } else {
+                if (self.left) |left| {
+                    const split_left, const split_right = try left.split(allocator, max_leaf_size, pos);
+                    if (self.right) |right| {
+                        const copy_right = try allocator.create(Node);
+                        copy_right.* = try right.clone(allocator);
+                        if (split_right) |sr| {
+                            defer copy_right.deinit(allocator);
+                            try sr.join(allocator, copy_right.*);
+                            return .{ split_left, sr };
+                        } else {
+                            return .{ split_left, copy_right };
+                        }
+                    } else if (split_right) |sr| {
+                        return .{ split_left, sr };
+                    } else {
+                        unreachable;
+                    }
+                } else {
+                    return error.OutOfBounds;
+                }
+            }
         }
     }
 
@@ -233,14 +327,52 @@ test "Catch an unbalanced Node" {
     const leaf1 = try Node.fromText(allocator, 10, "Hello");
     const leaf2 = try Node.fromText(allocator, 10, "Hello");
     const leaf3 = try Node.fromText(allocator, 10, "Hello");
+    const leaf4 = try Node.fromText(allocator, 10, "Hello");
+    const leaf5 = try Node.fromText(allocator, 10, "Hello");
+    const leaf6 = try Node.fromText(allocator, 10, "Hello");
 
     const right = try Node.createBranch(allocator, leaf2, leaf3);
+    const right2 = try Node.createBranch(allocator, leaf1, right);
+    const right3 = try Node.createBranch(allocator, leaf4, right2);
+    const right4 = try Node.createBranch(allocator, leaf5, right3);
 
-    const root = try Node.createBranch(allocator, leaf1, right);
+    const root = try Node.createBranch(allocator, leaf6, right4);
     defer root.deinit(allocator);
 
-    root.print(0);
+    // root.print(0);
 
-    try std.testing.expectEqual(2, root.getBalance());
-    try std.testing.expect(root.isUnbalanced(1.5));
+    try std.testing.expectEqual(5, root.getBalance());
+    try std.testing.expect(root.isUnbalanced(3));
+}
+
+test "Splitting and rejoining a Node" {
+    const allocator = std.testing.allocator;
+
+    const text = "Hello, from Maurizio!";
+    const node = try Node.fromText(allocator, 10, text);
+    defer node.deinit(allocator);
+
+    const left, const right = try node.split(allocator, 10, 8);
+    if (left) |l| {
+        if (right) |r| {
+            // TODO check that this works fine
+            // TODO do I have to update any depth when splitting (I think not)
+            // TODO what about the fact that I'm cloning the nodes?
+            // l.print(0);
+            try l.join(allocator, r.*);
+            defer l.deinit(allocator);
+            defer r.deinit(allocator);
+            // r.print(0);
+
+            l.print(0);
+
+            var value = std.ArrayList(u8).init(allocator);
+            defer value.deinit();
+            try l.getValue(&value);
+
+            try std.testing.expectEqualStrings(text, value.items);
+            return;
+        }
+    }
+    unreachable;
 }
