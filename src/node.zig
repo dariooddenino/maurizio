@@ -216,7 +216,6 @@ const Node = struct {
     }
 
     /// Inserts a String in the given position
-    /// TODO I don't think I can do this? :/
     /// TODO If there's enough space it shouldn't create a new node.
     fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
         // This clones the sub nodes, so we have the original, and two halves copies
@@ -237,10 +236,14 @@ const Node = struct {
             try new_root.join(allocator, right.*);
         }
 
-        // defer self.deinit(allocator);
+        if (self.left) |left| {
+            left.deinit(allocator);
+        }
+        if (self.right) |right| {
+            right.deinit(allocator);
+        }
         self.* = new_root.*;
-        // allocator.destroy(new_root);
-        // new_root.deinit(allocator);
+        allocator.destroy(new_root);
     }
 
     /// Saves in the buffer the value of the Node in the given range.
@@ -397,71 +400,22 @@ test "Splitting and rejoining a Node" {
     unreachable;
 }
 
-const Foo = struct {
-    next: ?*Foo,
-
-    fn new(allocator: Allocator) !*Foo {
-        const foo = try allocator.create(Foo);
-
-        foo.* = .{
-            .next = null,
-        };
-
-        return foo;
-    }
-
-    fn deinit(self: *Foo, allocator: Allocator) void {
-        if (self.next) |next| {
-            next.deinit(allocator);
-        }
-        allocator.destroy(self);
-    }
-
-    fn bar(self: *Foo, allocator: Allocator) !void {
-        const new_foo = try allocator.create(Foo);
-        new_foo.* = .{
-            .next = null,
-        };
-        self.* = new_foo.*;
-
-        // I've tried various combinations here without luck.
-        self.deinit(allocator);
-        allocator.destroy(new_foo);
-    }
-};
-
-test "foo" {
+test "Inserting in a Node" {
     const allocator = std.testing.allocator;
 
-    const foo = try Foo.new(allocator);
-    defer foo.deinit(allocator);
+    const text = "Hello, Maurizio!";
+    // const text = "Hello";
+    const result_text = "Hello, from Maurizio!";
+    // const result_text = "fromHello";
+    const node = try Node.fromText(allocator, 10, text);
+    defer node.deinit(allocator);
 
-    const foo2 = try Foo.new(allocator);
-    foo.next = foo2;
+    try node.insert(allocator, 10, 7, "from ");
+    // defer res.deinit(allocator);
 
-    try foo.bar(allocator);
+    var value = std.ArrayList(u8).init(allocator);
+    defer value.deinit();
+    try node.getValue(&value);
 
-    try std.testing.expect(true);
+    try std.testing.expectEqualStrings(result_text, value.items);
 }
-
-// test "Inserting in a Node" {
-//     const allocator = std.testing.allocator;
-
-//     const text = "Hello, Maurizio!";
-//     // const text = "Hello";
-//     const result_text = "Hello, from Maurizio!";
-//     // const result_text = "fromHello";
-//     const node = try Node.fromText(allocator, 10, text);
-//     defer node.deinit(allocator);
-
-//     try node.insert(allocator, 10, 7, "from ");
-//     // defer res.deinit(allocator);
-
-//     var value = std.ArrayList(u8).init(allocator);
-//     defer value.deinit();
-//     try node.getValue(&value);
-
-//     node.print(0);
-
-//     try std.testing.expectEqualStrings(result_text, value.items);
-// }
