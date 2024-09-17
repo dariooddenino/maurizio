@@ -11,7 +11,7 @@ const MAX_LEAF_SIZE: usize = 10;
 const REBALANCE_RATIO: f32 = 1.2;
 
 const Node = struct {
-    value: ?[]const u8,
+    value: ?[]const u8, // TODO maybe this should be a pointer? or a fixed length string?
     size: usize,
     full_size: usize,
     depth: usize,
@@ -67,7 +67,7 @@ const Node = struct {
     }
 
     /// TODO I think this can be a more general operation?
-    /// i.e. this is just insert.
+    /// i.e. is this just insert?
     fn fromText(allocator: Allocator, max_leaf_size: usize, text: []const u8) !*Node {
         if (text.len > max_leaf_size) {
             const mid_point: usize = @intFromFloat(@ceil(@as(f32, @floatFromInt(text.len)) / 2));
@@ -215,8 +215,33 @@ const Node = struct {
         }
     }
 
+    // Get the leaf at the given index if possible.
+    // TODO maybe this should return an optional?
+    fn getLeafAtIndex(self: *Node, pos: usize) !*Node {
+        if (self.is_leaf) {
+            if (pos > self.size)
+                return error.OutOfBounds;
+            return self;
+        } else {
+            if (pos >= self.size) {
+                if (self.right) |right| {
+                    return right.getLeafAtIndex(pos - self.size);
+                } else {
+                    return error.OutOfBounds;
+                }
+            } else {
+                if (self.left) |left| {
+                    return left.getLeafAtIndex(pos);
+                } else {
+                    return error.OutOfBounds;
+                }
+            }
+        }
+    }
+
     /// Inserts a String in the given position
-    /// TODO If there's enough space it shouldn't create a new node.
+    /// TODO A future optimization: if there's enough space it shouldn't split, but insert the text in the target leaf.
+    /// TODO does this update the size??
     fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
         // This clones the sub nodes, so we have the original, and two halves copies
         const left_split, const right_split = try self.split(allocator, max_leaf_size, pos);
@@ -244,6 +269,30 @@ const Node = struct {
         }
         self.* = new_root.*;
         allocator.destroy(new_root);
+    }
+
+    fn append(self: *Node, allocator: Allocator, max_leaf_size: usize, text: []const u8) !void {
+        const pos = self.full_size;
+        const target_leaf = try self.getLeafAtIndex(pos);
+        const remaining_space = max_leaf_size - target_leaf.size;
+        std.debug.print("\n\nTARGET {}", .{target_leaf});
+        std.debug.print("\n\nPOS {any}, REMAINING SPACE {any}, TEXT {s}, SELF {any}", .{ pos, remaining_space, text, target_leaf.value });
+        if (remaining_space >= text.len) {
+            const new_value = try allocator.alloc(u8, target_leaf.size + text.len);
+            defer allocator.free(new_value);
+            if (target_leaf.value) |value| {
+                @memcpy(new_value[0..value.len], value);
+            } else {
+                // NOTE I think this is redudant.
+                @memcpy(new_value[0..], "");
+            }
+            @memcpy(new_value[target_leaf.size..], text);
+
+            target_leaf.value = new_value;
+            // TODO I have to update the sizes...
+        } else {
+            try self.insert(allocator, max_leaf_size, pos, text);
+        }
     }
 
     /// Saves in the buffer the value of the Node in the given range.
@@ -404,18 +453,57 @@ test "Inserting in a Node" {
     const allocator = std.testing.allocator;
 
     const text = "Hello, Maurizio!";
-    // const text = "Hello";
     const result_text = "Hello, from Maurizio!";
-    // const result_text = "fromHello";
     const node = try Node.fromText(allocator, 10, text);
     defer node.deinit(allocator);
 
     try node.insert(allocator, 10, 7, "from ");
-    // defer res.deinit(allocator);
 
     var value = std.ArrayList(u8).init(allocator);
     defer value.deinit();
     try node.getValue(&value);
 
     try std.testing.expectEqualStrings(result_text, value.items);
+}
+
+// test "Inserting in a Node with enough space shouldn't create new nodes" {
+//     const allocator = std.testing.allocator;
+
+//     const text = "abcde";
+
+//     const node = try Node.fromText(allocator, 3, text);
+//     defer node.deinit(allocator);
+
+//     // const node_2 = try Node.fromText(allocator, 3, text);
+//     // defer node_2.deinit(allocator);
+
+//     try node.insert(allocator, 3, 5, "f");
+//     // try node_2.insert(allocator, 3, 2, "f");
+
+//     node.print(0);
+//     // node_2.print(0);
+
+//     try std.testing.expectEqual(2, node.depth);
+//     // try std.testing.expectEqual(2, node_2.depth);
+// }
+
+test "Appending a Node with enough space shouldn't create new nodes" {
+    const allocator = std.testing.allocator;
+
+    const text = "abcde";
+
+    const node = try Node.fromText(allocator, 3, text);
+    defer node.deinit(allocator);
+
+    // const node_2 = try Node.fromText(allocator, 3, text);
+    // defer node_2.deinit(allocator);
+
+    try node.append(allocator, 3, "f");
+    // try node_2.insert(allocator, 3, 2, "f");
+
+    node.print(0);
+    // node_2.print(0);
+
+    try std.testing.expectEqual(2, node.depth);
+    // try std.testing.expectEqual(2, node_2.depth);
 }
