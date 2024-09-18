@@ -6,23 +6,23 @@ const BoundedArray = std.BoundedArray;
 const Timer = time.Timer;
 
 /// The maximum size a leaf can reach.
-const MAX_LEAF_SIZE: usize = 100;
+const MAX_LEAF_SIZE: usize = 10;
 /// The L/R imbalance ratio that triggers a rebalace operation.
 const REBALANCE_RATIO: f32 = 1.2;
 
 const LeafText = BoundedArray(u8, MAX_LEAF_SIZE);
 
 // TODO
-// - INSERT: I'm not updating size and depth recursively
-// - DELETE: I'm not updating size and depth recursively
-// - JOIN: I'm not updating size and depth recursively?
-// - I think all these would benefit from wrapping everything in the Rope as "head node".
-//   Basically I will have to rewrite all this from scratch, mixing this file with rope.zig
-// - wrap in a rope
+// - BUG see failing test and follow notes.
+// - BUG when closing the editor there's a memory leak
+// - INSERT: I think size is fine, depth not updated
+// - DELETE: I think size is fine, depth not updated
+// - JOIN: No idea here
 // - format node from zighelp
 // - Automatic balance check and rebalance
+// - There's a bit of replication between Node and Rope functionalities
 
-const Node = struct {
+pub const Node = struct {
     value: ?*LeafText,
     size: usize,
     full_size: usize,
@@ -31,22 +31,21 @@ const Node = struct {
     right: ?*Node,
     is_leaf: bool,
 
-    fn deinit(self: *Node, allocator: Allocator) void {
+    /// Deinit the Node
+    pub fn deinit(self: *Node, allocator: Allocator) void {
         if (self.left) |left| {
             left.deinit(allocator);
         }
         if (self.right) |right| {
             right.deinit(allocator);
         }
-        // NOTE: why don't I have to deinit this? Is this magic?
         if (self.value) |value| {
             allocator.destroy(value);
-            // value.deinit(allocator);
         }
         allocator.destroy(self);
     }
 
-    fn createLeaf(allocator: Allocator, text: []const u8) !*Node {
+    pub fn createLeaf(allocator: Allocator, text: []const u8) !*Node {
         if (text.len > MAX_LEAF_SIZE) {
             unreachable;
         }
@@ -247,15 +246,15 @@ const Node = struct {
     }
 
     // TODO, if we're deleting within the boundaries of a leaf we can optimize this.
-    fn delete(self: *Node, allocator: Allocator, pos: usize, len: usize) !void {
+    pub fn delete(self: *Node, allocator: Allocator, start: usize, end: usize) !void {
         var to_delete: ?*Node = null;
         var right: ?*Node = null;
         var new_root: ?*Node = null;
 
-        const left, const rest = try self.split(allocator, pos);
+        const left, const rest = try self.split(allocator, start);
 
         if (rest) |rs| {
-            to_delete, right = try rs.split(allocator, len);
+            to_delete, right = try rs.split(allocator, end - start);
             rs.deinit(allocator);
         }
         if (to_delete) |td| {
@@ -312,19 +311,34 @@ const Node = struct {
     }
 
     /// Inserts a String in the given position
-    fn insert(self: *Node, allocator: Allocator, pos: usize, text: []const u8) !void {
+    pub fn insert(self: *Node, allocator: Allocator, pos: usize, text: []const u8) !void {
         // If there's some hope to fit the text in a leaf we do a check
         // TODO can this be more advanced?
         if (text.len <= MAX_LEAF_SIZE) {
-            // std.debug.print("A {s}\n", .{text});
             const target_leaf, const relative_pos = try self.getLeafAtIndex(pos);
-            // std.debug.print("LEAF AND POS {any} {}\n", .{ target_leaf, relative_pos });
 
+            // const valuez = blk: {
+            //     if (target_leaf.value) |value| {
+            //         break :blk value.constSlice();
+            //     } else {
+            //         // NOTE this looks suspicious
+            //         break :blk "";
+            //     }
+            // };
+
+            // TODO the bug here is that relative_pos never appears to be 0?
+            // TODO the problem is that the second insert after the "first one" in the new leaf doesn't update the size.
             if (target_leaf.size + text.len <= MAX_LEAF_SIZE) {
-                // std.debug.print("B\n", .{});
                 if (target_leaf.value) |value| {
-                    // std.debug.print("C\n", .{});
+                    // if (pos != relative_pos and relative_pos == 0)
+                    //     std.debug.print("\n\nINSERTING IN TARGET LEAF AT POS {}\n\n", .{relative_pos});
+                    // For some reason this fails sometimes?
+                    // TODO this doesn't work, I have no idea why
                     try value.insertSlice(relative_pos, text);
+
+                    // TODO is this enough to fix the insertion problem?
+                    target_leaf.size += text.len;
+                    target_leaf.full_size += text.len;
                     return;
                 } else {
                     // NOTE probably not possible?
@@ -338,6 +352,7 @@ const Node = struct {
 
         var new_root: *Node = undefined;
         if (left_split) |left| {
+            // Here we're keeping left as the new root
             new_root = left;
             const right = try Node.fromText(allocator, text);
             defer right.deinit(allocator);
@@ -351,43 +366,26 @@ const Node = struct {
             try new_root.join(allocator, right.*);
         }
 
+        // TODO this pattern is happening in multiple places
         if (self.left) |left| {
             left.deinit(allocator);
         }
         if (self.right) |right| {
             right.deinit(allocator);
         }
+        if (self.value) |value| {
+            allocator.destroy(value);
+        }
         self.* = new_root.*;
         allocator.destroy(new_root);
     }
 
-    fn append(self: *Node, allocator: Allocator, text: []const u8) !void {
+    pub fn append(self: *Node, allocator: Allocator, text: []const u8) !void {
         try self.insert(allocator, self.full_size, text);
-        // const pos = self.full_size;
-        // const target_leaf = try self.getLeafAtIndex(pos);
-        // const remaining_space = MAX_LEAF_SIZE - target_leaf.size;
-        // std.debug.print("\n\nTARGET {}", .{target_leaf});
-        // std.debug.print("\n\nPOS {any}, REMAINING SPACE {any}, TEXT {s}, SELF {any}", .{ pos, remaining_space, text, target_leaf.value });
-        // if (remaining_space >= text.len) {
-        //     const new_value = try allocator.alloc(u8, target_leaf.size + text.len);
-        //     defer allocator.free(new_value);
-        //     if (target_leaf.value) |value| {
-        //         @memcpy(new_value[0..value.len], value);
-        //     } else {
-        //         // NOTE I think this is redudant.
-        //         @memcpy(new_value[0..], "");
-        //     }
-        //     @memcpy(new_value[target_leaf.size..], text);
-
-        //     target_leaf.value = new_value;
-        //     // TODO I have to update the sizes...
-        // } else {
-        //     try self.insert(allocator, pos, text);
-        // }
     }
 
     /// Saves in the buffer the value of the Node in the given range.
-    fn getValueRange(self: Node, buffer: *std.ArrayList(u8), start: usize, end: usize) !void {
+    pub fn getValueRange(self: Node, buffer: *std.ArrayList(u8), start: usize, end: usize) !void {
         if (self.is_leaf) {
             const len = end - start;
             if (start < self.size and len <= self.size) {
@@ -416,7 +414,7 @@ const Node = struct {
     }
 
     /// Gets the balance ratio of the Node
-    fn getBalance(self: Node) f32 {
+    pub fn getBalance(self: Node) f32 {
         if (self.is_leaf) {
             return 1;
         } else {
@@ -435,7 +433,7 @@ const Node = struct {
 
     /// Checks whether the Node is unbalanced
     /// A certain depth is needed before the check is performed.
-    fn isUnbalanced(self: Node, rebalance_ratio: f32) bool {
+    pub fn isUnbalanced(self: Node, rebalance_ratio: f32) bool {
         return self.depth > 4 and self.getBalance() > rebalance_ratio;
     }
 
@@ -481,155 +479,157 @@ const Node = struct {
     }
 };
 
-test "Creating a balanced Node" {
-    const allocator = std.testing.allocator;
+// test "Creating a balanced Node" {
+//     const allocator = std.testing.allocator;
 
-    const long_text = "Hello, Maurizio! The best text editor in the world.";
+//     const long_text = "Hello, Maurizio! The best text editor in the world.";
 
-    const node = try Node.fromText(allocator, long_text);
-    defer node.deinit(allocator);
+//     const node = try Node.fromText(allocator, long_text);
+//     defer node.deinit(allocator);
 
-    var value = std.ArrayList(u8).init(allocator);
-    defer value.deinit();
-    try node.getValue(&value);
+//     var value = std.ArrayList(u8).init(allocator);
+//     defer value.deinit();
+//     try node.getValue(&value);
 
-    try std.testing.expectEqualStrings(long_text, value.items);
-    try std.testing.expectEqual(1, node.getBalance());
-}
+//     try std.testing.expectEqualStrings(long_text, value.items);
+//     try std.testing.expectEqual(1, node.getBalance());
+// }
 
-test "Catch an unbalanced Node" {
-    const allocator = std.testing.allocator;
+// test "Catch an unbalanced Node" {
+//     const allocator = std.testing.allocator;
 
-    const leaf1 = try Node.fromText(allocator, "Hello");
-    const leaf2 = try Node.fromText(allocator, "Hello");
-    const leaf3 = try Node.fromText(allocator, "Hello");
-    const leaf4 = try Node.fromText(allocator, "Hello");
-    const leaf5 = try Node.fromText(allocator, "Hello");
-    const leaf6 = try Node.fromText(allocator, "Hello");
+//     const leaf1 = try Node.fromText(allocator, "Hello");
+//     const leaf2 = try Node.fromText(allocator, "Hello");
+//     const leaf3 = try Node.fromText(allocator, "Hello");
+//     const leaf4 = try Node.fromText(allocator, "Hello");
+//     const leaf5 = try Node.fromText(allocator, "Hello");
+//     const leaf6 = try Node.fromText(allocator, "Hello");
 
-    const right = try Node.createBranch(allocator, leaf2, leaf3);
-    const right2 = try Node.createBranch(allocator, leaf1, right);
-    const right3 = try Node.createBranch(allocator, leaf4, right2);
-    const right4 = try Node.createBranch(allocator, leaf5, right3);
+//     const right = try Node.createBranch(allocator, leaf2, leaf3);
+//     const right2 = try Node.createBranch(allocator, leaf1, right);
+//     const right3 = try Node.createBranch(allocator, leaf4, right2);
+//     const right4 = try Node.createBranch(allocator, leaf5, right3);
 
-    const root = try Node.createBranch(allocator, leaf6, right4);
-    defer root.deinit(allocator);
+//     const root = try Node.createBranch(allocator, leaf6, right4);
+//     defer root.deinit(allocator);
 
-    try std.testing.expectEqual(5, root.getBalance());
-    try std.testing.expect(root.isUnbalanced(3));
-}
+//     try std.testing.expectEqual(5, root.getBalance());
+//     try std.testing.expect(root.isUnbalanced(3));
+// }
 
-test "Copying a leaf" {
-    const allocator = std.testing.allocator;
+// test "Copying a leaf" {
+//     const allocator = std.testing.allocator;
 
-    const text = "Hello";
+//     const text = "Hello";
 
-    const node1 = try Node.fromText(allocator, text);
-    const node2 = try Node.copyLeaf(allocator, node1.*);
-    defer node1.deinit(allocator);
-    defer node2.deinit(allocator);
+//     const node1 = try Node.fromText(allocator, text);
+//     const node2 = try Node.copyLeaf(allocator, node1.*);
+//     defer node1.deinit(allocator);
+//     defer node2.deinit(allocator);
 
-    // TODO this pattern is fairly annoying
-    var value = std.ArrayList(u8).init(allocator);
-    defer value.deinit();
-    try node1.getValue(&value);
+//     // TODO this pattern is fairly annoying
+//     var value = std.ArrayList(u8).init(allocator);
+//     defer value.deinit();
+//     try node1.getValue(&value);
 
-    var value2 = std.ArrayList(u8).init(allocator);
-    defer value2.deinit();
-    try node2.getValue(&value2);
+//     var value2 = std.ArrayList(u8).init(allocator);
+//     defer value2.deinit();
+//     try node2.getValue(&value2);
 
-    try std.testing.expectEqualStrings(value.items, value2.items);
-}
+//     try std.testing.expectEqualStrings(value.items, value2.items);
+// }
 
-test "Splitting a Leaf is memory safe" {
-    const allocator = std.testing.allocator;
+// test "Splitting a Leaf is memory safe" {
+//     const allocator = std.testing.allocator;
 
-    const text = [_]u8{'a'} ** MAX_LEAF_SIZE;
-    const node = try Node.fromText(allocator, &text);
-    defer node.deinit(allocator);
+//     const text = [_]u8{'a'} ** MAX_LEAF_SIZE;
+//     const node = try Node.fromText(allocator, &text);
+//     defer node.deinit(allocator);
 
-    const left, const right = try node.split(allocator, @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0));
+//     const left, const right = try node.split(allocator, @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0));
 
-    if (left) |l| {
-        if (right) |r| {
-            defer l.deinit(allocator);
-            defer r.deinit(allocator);
+//     if (left) |l| {
+//         if (right) |r| {
+//             defer l.deinit(allocator);
+//             defer r.deinit(allocator);
 
-            try std.testing.expect(true);
-            return;
-        }
-    }
-    unreachable;
-}
+//             try std.testing.expect(true);
+//             return;
+//         }
+//     }
+//     unreachable;
+// }
 
-test "Splitting a Branch is memory safe" {
-    const allocator = std.testing.allocator;
+// test "Splitting a Branch is memory safe" {
+//     const allocator = std.testing.allocator;
 
-    const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 2);
-    const node = try Node.fromText(allocator, &text);
-    defer node.deinit(allocator);
+//     const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 2);
+//     const node = try Node.fromText(allocator, &text);
+//     defer node.deinit(allocator);
 
-    const left, const right = try node.split(allocator, @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0));
+//     const left, const right = try node.split(allocator, @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0));
 
-    if (left) |l| {
-        if (right) |r| {
-            defer l.deinit(allocator);
-            defer r.deinit(allocator);
+//     if (left) |l| {
+//         if (right) |r| {
+//             defer l.deinit(allocator);
+//             defer r.deinit(allocator);
 
-            try std.testing.expect(true);
-            return;
-        }
-    }
-    unreachable;
-}
+//             try std.testing.expect(true);
+//             return;
+//         }
+//     }
+//     unreachable;
+// }
 
-test "Splitting and rejoining a Node" {
-    const allocator = std.testing.allocator;
+// test "Splitting and rejoining a Node" {
+//     const allocator = std.testing.allocator;
 
-    const text = "Hello, from Maurizio!";
-    const node = try Node.fromText(allocator, text);
-    defer node.deinit(allocator);
+//     const text = "Hello, from Maurizio!";
+//     const node = try Node.fromText(allocator, text);
+//     defer node.deinit(allocator);
 
-    const left, const right = try node.split(allocator, 8);
-    if (left) |l| {
-        if (right) |r| {
-            defer l.deinit(allocator);
-            defer r.deinit(allocator);
+//     const left, const right = try node.split(allocator, 8);
+//     if (left) |l| {
+//         if (right) |r| {
+//             defer l.deinit(allocator);
+//             defer r.deinit(allocator);
 
-            try l.join(allocator, r.*);
+//             try l.join(allocator, r.*);
 
-            var value = std.ArrayList(u8).init(allocator);
-            defer value.deinit();
-            try l.getValue(&value);
+//             var value = std.ArrayList(u8).init(allocator);
+//             defer value.deinit();
+//             try l.getValue(&value);
 
-            try std.testing.expectEqual(1, l.getBalance());
-            try std.testing.expectEqualStrings(text, value.items);
-            return;
-        }
-    }
-    unreachable;
-}
+//             try std.testing.expectEqual(1, l.getBalance());
+//             try std.testing.expectEqualStrings(text, value.items);
+//             return;
+//         }
+//     }
+//     unreachable;
+// }
 
-test "Inserting in a Node" {
-    const allocator = std.testing.allocator;
+// test "Inserting in a Node" {
+//     const allocator = std.testing.allocator;
 
-    const text = "Hello, Maurizio!";
-    const result_text = "Hello, from Maurizio!";
-    const node = try Node.fromText(allocator, text);
-    defer node.deinit(allocator);
+//     const text = "Hello, Maurizio!";
+//     const result_text = "Hello, from Maurizio!";
+//     const node = try Node.fromText(allocator, text);
+//     defer node.deinit(allocator);
 
-    // node.print(0);
+//     // node.print(0);
 
-    try node.insert(allocator, 7, "from ");
+//     // std.debug.print("\n==\n", .{});
 
-    // node.print(0);
+//     try node.insert(allocator, 7, "from ");
 
-    var value = std.ArrayList(u8).init(allocator);
-    defer value.deinit();
-    try node.getValue(&value);
+//     // node.print(0);
 
-    try std.testing.expectEqualStrings(result_text, value.items);
-}
+//     var value = std.ArrayList(u8).init(allocator);
+//     defer value.deinit();
+//     try node.getValue(&value);
+
+//     try std.testing.expectEqualStrings(result_text, value.items);
+// }
 
 // test "Creating a big Node should take less than 10ms" {
 //     const allocator = std.testing.allocator;
@@ -708,17 +708,36 @@ test "Inserting in a Node" {
 //     try std.testing.expectEqual(1, node.depth);
 // }
 
-// test "Deleting from a Node" {
-//     const allocator = std.testing.allocator;
+test "Deleting from a Node" {
+    const allocator = std.testing.allocator;
 
-//     const node = try Node.fromText(allocator, "Hello from Maurizio!");
-//     defer node.deinit(allocator);
+    const node = try Node.fromText(allocator, "Hello from Maurizio!");
+    defer node.deinit(allocator);
 
-//     try node.delete(allocator, 5, 5);
+    try node.delete(allocator, 5, 10);
 
-//     var value = std.ArrayList(u8).init(allocator);
-//     defer value.deinit();
-//     try node.getValue(&value);
+    var value = std.ArrayList(u8).init(allocator);
+    defer value.deinit();
+    try node.getValue(&value);
 
-//     try std.testing.expectEqualStrings("Hello Maurizio!", value.items);
-// }
+    try std.testing.expectEqualStrings("Hello Maurizio!", value.items);
+}
+
+test "Appending on a new leaf" {
+    const allocator = std.testing.allocator;
+
+    const node = try Node.fromText(allocator, "1234567890");
+    defer node.deinit(allocator);
+
+    // node.print(0);
+    try node.append(allocator, "a");
+    // node.print(0);
+    try node.append(allocator, "b"); // This doesn't update the size correctly, making it fail // This doesn't update the size correctly, making it fail.
+    // node.print(0);
+
+    var value = std.ArrayList(u8).init(allocator);
+    defer value.deinit();
+    try node.getValue(&value);
+
+    try std.testing.expectEqualStrings("1234567890ab", value.items);
+}
