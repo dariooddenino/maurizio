@@ -59,7 +59,6 @@ const Node = struct {
 
         node.* = .{
             .value = value,
-            // .value = text,
             .size = text.len,
             .full_size = text.len,
             .depth = 1,
