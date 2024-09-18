@@ -1,17 +1,25 @@
 const std = @import("std");
+const time = std.time;
 
 const Allocator = std.mem.Allocator;
-
-// TODO
-// - use a config object
+const BoundedArray = std.BoundedArray;
+const Timer = time.Timer;
 
 /// The maximum size a leaf can reach.
 const MAX_LEAF_SIZE: usize = 10;
 /// The L/R imbalance ratio that triggers a rebalace operation.
 const REBALANCE_RATIO: f32 = 1.2;
 
+const LeafText = BoundedArray(u8, MAX_LEAF_SIZE);
+
+// TODO
+// - delete
+// - wrap in a rope
+// - format node from zighelp
+
 const Node = struct {
-    value: ?[]const u8, // TODO maybe this should be a pointer? or a fixed length string?
+    value: ?*LeafText,
+    // value: ?[]const u8, // TODO maybe this should be a pointer? or a fixed length string?
     size: usize,
     full_size: usize,
     depth: usize,
@@ -26,19 +34,28 @@ const Node = struct {
         if (self.right) |right| {
             right.deinit(allocator);
         }
-
+        // NOTE: why don't I have to deinit this? Is this magic?
+        if (self.value) |value| {
+            allocator.destroy(value);
+            // value.deinit(allocator);
+        }
         allocator.destroy(self);
     }
 
-    fn createLeaf(allocator: Allocator, max_leaf_size: usize, text: []const u8) !*Node {
-        if (text.len > max_leaf_size) {
+    fn createLeaf(allocator: Allocator, text: []const u8) !*Node {
+        if (text.len > MAX_LEAF_SIZE) {
             unreachable;
         }
 
         const node = try allocator.create(Node);
 
+        const value = try allocator.create(LeafText);
+
+        value.* = try LeafText.fromSlice(text);
+
         node.* = .{
-            .value = text,
+            .value = value,
+            // .value = text,
             .size = text.len,
             .full_size = text.len,
             .depth = 1,
@@ -68,17 +85,17 @@ const Node = struct {
 
     /// TODO I think this can be a more general operation?
     /// i.e. is this just insert?
-    fn fromText(allocator: Allocator, max_leaf_size: usize, text: []const u8) !*Node {
-        if (text.len > max_leaf_size) {
+    fn fromText(allocator: Allocator, text: []const u8) !*Node {
+        if (text.len > MAX_LEAF_SIZE) {
             const mid_point: usize = @intFromFloat(@ceil(@as(f32, @floatFromInt(text.len)) / 2));
             const left_text = text[0..mid_point];
             const right_text = text[mid_point..];
-            const left = try Node.fromText(allocator, max_leaf_size, left_text);
-            const right = try Node.fromText(allocator, max_leaf_size, right_text);
+            const left = try Node.fromText(allocator, left_text);
+            const right = try Node.fromText(allocator, right_text);
 
             return try createBranch(allocator, left, right);
         } else {
-            return try createLeaf(allocator, max_leaf_size, text);
+            return try createLeaf(allocator, text);
         }
     }
 
@@ -86,7 +103,30 @@ const Node = struct {
     // pub fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
     // }
 
+    /// Copies a leaf, used while splitting
+    fn copyLeaf(allocator: Allocator, source: Node) !*Node {
+        const value = blk: {
+            if (source.value) |value| {
+                break :blk value.constSlice();
+            } else {
+                // NOTE this looks suspicious
+                break :blk "";
+            }
+        };
+
+        const leaf = try Node.createLeaf(allocator, value);
+        leaf.depth = source.depth;
+        return leaf;
+    }
+
     fn clone(self: Node, allocator: std.mem.Allocator) !Node {
+        if (self.is_leaf) {
+            // TODO awkward, I should revisit this whole split/clone algorithm
+            const leaf = try Node.copyLeaf(allocator, self);
+            defer allocator.destroy(leaf);
+            return leaf.*;
+        }
+
         var result = self;
         if (self.left) |left| {
             const new_left = try allocator.create(Node);
@@ -136,41 +176,33 @@ const Node = struct {
     /// Splits the node at the given position.
     /// NOTE: what did I mean with "the original one is left untouched?"
     /// I might have to look into the fact that I'm cloning the nodes, is it really needed?
-    fn split(self: *Node, allocator: std.mem.Allocator, max_leaf_size: usize, pos: usize) !struct { ?*Node, ?*Node } {
+    fn split(self: *Node, allocator: std.mem.Allocator, pos: usize) !struct { ?*Node, ?*Node } {
         if (self.is_leaf) {
             if (pos == 0) {
-                const leaf = try allocator.create(Node);
-                leaf.* = self.*;
-                return .{
-                    null,
-                    leaf,
-                };
+                const leaf = try Node.copyLeaf(allocator, self.*);
+                return .{ null, leaf };
             }
             if (pos == self.size) {
-                const leaf = try allocator.create(Node);
-                leaf.* = self.*;
-                return .{
-                    leaf,
-                    null,
-                };
+                const leaf = try Node.copyLeaf(allocator, self.*);
+                return .{ leaf, null };
             }
 
             const left_content, const right_content = blk: {
                 if (self.value) |value| {
-                    break :blk .{ value[0..pos], value[pos..] };
+                    break :blk .{ value.constSlice()[0..pos], value.constSlice()[pos..] };
                 } else {
                     break :blk .{ "", "" };
                 }
             };
 
-            const left = try Node.createLeaf(allocator, max_leaf_size, left_content);
-            const right = try Node.createLeaf(allocator, max_leaf_size, right_content);
+            const left = try Node.createLeaf(allocator, left_content);
+            const right = try Node.createLeaf(allocator, right_content);
 
             return .{ left, right };
         } else {
             if (pos >= self.size) {
                 if (self.right) |right| {
-                    const split_left, const split_right = try right.split(allocator, max_leaf_size, pos - self.size);
+                    const split_left, const split_right = try right.split(allocator, pos - self.size);
                     if (self.left) |left| {
                         const copy_left = try allocator.create(Node);
                         copy_left.* = try left.clone(allocator);
@@ -192,7 +224,7 @@ const Node = struct {
                 }
             } else {
                 if (self.left) |left| {
-                    const split_left, const split_right = try left.split(allocator, max_leaf_size, pos);
+                    const split_left, const split_right = try left.split(allocator, pos);
                     if (self.right) |right| {
                         const copy_right = try allocator.create(Node);
                         copy_right.* = try right.clone(allocator);
@@ -215,13 +247,13 @@ const Node = struct {
         }
     }
 
-    // Get the leaf at the given index if possible.
+    /// Get the leaf at the given index, together with the relative pos
     // TODO maybe this should return an optional?
-    fn getLeafAtIndex(self: *Node, pos: usize) !*Node {
+    fn getLeafAtIndex(self: *Node, pos: usize) !struct { *Node, usize } {
         if (self.is_leaf) {
             if (pos > self.size)
                 return error.OutOfBounds;
-            return self;
+            return .{ self, pos };
         } else {
             if (pos >= self.size) {
                 if (self.right) |right| {
@@ -240,20 +272,34 @@ const Node = struct {
     }
 
     /// Inserts a String in the given position
-    /// TODO A future optimization: if there's enough space it shouldn't split, but insert the text in the target leaf.
-    /// TODO does this update the size??
-    fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
+    fn insert(self: *Node, allocator: Allocator, pos: usize, text: []const u8) !void {
+        // If there's some hope to fit the text in a leaf we do a check
+        // TODO can this be more advanced?
+        if (text.len <= MAX_LEAF_SIZE) {
+            const target_leaf, const relative_pos = try self.getLeafAtIndex(pos);
+
+            if (target_leaf.size + text.len <= MAX_LEAF_SIZE) {
+                if (target_leaf.value) |value| {
+                    try value.insertSlice(relative_pos, text);
+                    return;
+                } else {
+                    // NOTE probably not possible?
+                    return error.OutOfBounds;
+                }
+            }
+        }
+
         // This clones the sub nodes, so we have the original, and two halves copies
-        const left_split, const right_split = try self.split(allocator, max_leaf_size, pos);
+        const left_split, const right_split = try self.split(allocator, pos);
 
         var new_root: *Node = undefined;
         if (left_split) |left| {
             new_root = left;
-            const right = try Node.fromText(allocator, max_leaf_size, text);
+            const right = try Node.fromText(allocator, text);
             defer right.deinit(allocator);
             try new_root.join(allocator, right.*);
         } else {
-            new_root = try Node.fromText(allocator, max_leaf_size, text);
+            new_root = try Node.fromText(allocator, text);
         }
 
         if (right_split) |right| {
@@ -271,28 +317,29 @@ const Node = struct {
         allocator.destroy(new_root);
     }
 
-    fn append(self: *Node, allocator: Allocator, max_leaf_size: usize, text: []const u8) !void {
-        const pos = self.full_size;
-        const target_leaf = try self.getLeafAtIndex(pos);
-        const remaining_space = max_leaf_size - target_leaf.size;
-        std.debug.print("\n\nTARGET {}", .{target_leaf});
-        std.debug.print("\n\nPOS {any}, REMAINING SPACE {any}, TEXT {s}, SELF {any}", .{ pos, remaining_space, text, target_leaf.value });
-        if (remaining_space >= text.len) {
-            const new_value = try allocator.alloc(u8, target_leaf.size + text.len);
-            defer allocator.free(new_value);
-            if (target_leaf.value) |value| {
-                @memcpy(new_value[0..value.len], value);
-            } else {
-                // NOTE I think this is redudant.
-                @memcpy(new_value[0..], "");
-            }
-            @memcpy(new_value[target_leaf.size..], text);
+    fn append(self: *Node, allocator: Allocator, text: []const u8) !void {
+        try self.insert(allocator, self.full_size, text);
+        // const pos = self.full_size;
+        // const target_leaf = try self.getLeafAtIndex(pos);
+        // const remaining_space = MAX_LEAF_SIZE - target_leaf.size;
+        // std.debug.print("\n\nTARGET {}", .{target_leaf});
+        // std.debug.print("\n\nPOS {any}, REMAINING SPACE {any}, TEXT {s}, SELF {any}", .{ pos, remaining_space, text, target_leaf.value });
+        // if (remaining_space >= text.len) {
+        //     const new_value = try allocator.alloc(u8, target_leaf.size + text.len);
+        //     defer allocator.free(new_value);
+        //     if (target_leaf.value) |value| {
+        //         @memcpy(new_value[0..value.len], value);
+        //     } else {
+        //         // NOTE I think this is redudant.
+        //         @memcpy(new_value[0..], "");
+        //     }
+        //     @memcpy(new_value[target_leaf.size..], text);
 
-            target_leaf.value = new_value;
-            // TODO I have to update the sizes...
-        } else {
-            try self.insert(allocator, max_leaf_size, pos, text);
-        }
+        //     target_leaf.value = new_value;
+        //     // TODO I have to update the sizes...
+        // } else {
+        //     try self.insert(allocator, pos, text);
+        // }
     }
 
     /// Saves in the buffer the value of the Node in the given range.
@@ -301,7 +348,7 @@ const Node = struct {
             const len = end - start;
             if (start < self.size and len <= self.size) {
                 if (self.value) |value| {
-                    try buffer.appendSlice(value[start..end]);
+                    try buffer.appendSlice(value.constSlice()[start..end]);
                 } else {
                     // TODO should this error?
                     try buffer.appendSlice("");
@@ -363,8 +410,16 @@ const Node = struct {
     fn print(self: Node, depth: usize) void {
         printSpaces(depth);
 
+        const value = blk: {
+            if (self.value) |value| {
+                break :blk value.constSlice();
+            } else {
+                // NOTE this looks suspicious
+                break :blk "";
+            }
+        };
         if (self.is_leaf) {
-            std.debug.print("({}) {s}\n", .{ self.size, self.value orelse "" });
+            std.debug.print("({}) {s}\n", .{ self.size, value });
         } else {
             std.debug.print("({}|{}|{}):\n", .{ self.size, self.full_size, self.depth });
             if (self.left) |left| {
@@ -387,7 +442,7 @@ test "Creating a balanced Node" {
 
     const long_text = "Hello, Maurizio! The best text editor in the world.";
 
-    const node = try Node.fromText(allocator, 10, long_text);
+    const node = try Node.fromText(allocator, long_text);
     defer node.deinit(allocator);
 
     // node.print(0);
@@ -400,16 +455,15 @@ test "Creating a balanced Node" {
     try std.testing.expectEqual(1, node.getBalance());
 }
 
-// TODO I need more depth in this tree to trigger the unbalance check
 test "Catch an unbalanced Node" {
     const allocator = std.testing.allocator;
 
-    const leaf1 = try Node.fromText(allocator, 10, "Hello");
-    const leaf2 = try Node.fromText(allocator, 10, "Hello");
-    const leaf3 = try Node.fromText(allocator, 10, "Hello");
-    const leaf4 = try Node.fromText(allocator, 10, "Hello");
-    const leaf5 = try Node.fromText(allocator, 10, "Hello");
-    const leaf6 = try Node.fromText(allocator, 10, "Hello");
+    const leaf1 = try Node.fromText(allocator, "Hello");
+    const leaf2 = try Node.fromText(allocator, "Hello");
+    const leaf3 = try Node.fromText(allocator, "Hello");
+    const leaf4 = try Node.fromText(allocator, "Hello");
+    const leaf5 = try Node.fromText(allocator, "Hello");
+    const leaf6 = try Node.fromText(allocator, "Hello");
 
     const right = try Node.createBranch(allocator, leaf2, leaf3);
     const right2 = try Node.createBranch(allocator, leaf1, right);
@@ -423,19 +477,84 @@ test "Catch an unbalanced Node" {
     try std.testing.expect(root.isUnbalanced(3));
 }
 
+test "Copying a leaf" {
+    const allocator = std.testing.allocator;
+
+    const text = "Hello";
+
+    const node1 = try Node.fromText(allocator, text);
+    const node2 = try Node.copyLeaf(allocator, node1.*);
+    defer node1.deinit(allocator);
+    defer node2.deinit(allocator);
+
+    // TODO this pattern is fairly annoying
+    var value = std.ArrayList(u8).init(allocator);
+    defer value.deinit();
+    try node1.getValue(&value);
+
+    var value2 = std.ArrayList(u8).init(allocator);
+    defer value2.deinit();
+    try node2.getValue(&value2);
+
+    try std.testing.expectEqualStrings(value.items, value2.items);
+}
+
+test "Splitting a Leaf is memory safe" {
+    const allocator = std.testing.allocator;
+
+    const text = [_]u8{'a'} ** MAX_LEAF_SIZE;
+    const node = try Node.fromText(allocator, &text);
+    defer node.deinit(allocator);
+
+    const left, const right = try node.split(allocator, @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0));
+
+    if (left) |l| {
+        if (right) |r| {
+            defer l.deinit(allocator);
+            defer r.deinit(allocator);
+
+            try std.testing.expect(true);
+            return;
+        }
+    }
+    unreachable;
+}
+
+test "Splitting a Branch is memory safe" {
+    const allocator = std.testing.allocator;
+
+    const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 2);
+    const node = try Node.fromText(allocator, &text);
+    defer node.deinit(allocator);
+
+    const left, const right = try node.split(allocator, @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0));
+
+    if (left) |l| {
+        if (right) |r| {
+            defer l.deinit(allocator);
+            defer r.deinit(allocator);
+
+            try std.testing.expect(true);
+            return;
+        }
+    }
+    unreachable;
+}
+
 test "Splitting and rejoining a Node" {
     const allocator = std.testing.allocator;
 
     const text = "Hello, from Maurizio!";
-    const node = try Node.fromText(allocator, 10, text);
+    const node = try Node.fromText(allocator, text);
     defer node.deinit(allocator);
 
-    const left, const right = try node.split(allocator, 10, 8);
+    const left, const right = try node.split(allocator, 8);
     if (left) |l| {
         if (right) |r| {
-            try l.join(allocator, r.*);
             defer l.deinit(allocator);
             defer r.deinit(allocator);
+
+            try l.join(allocator, r.*);
 
             var value = std.ArrayList(u8).init(allocator);
             defer value.deinit();
@@ -454,10 +573,10 @@ test "Inserting in a Node" {
 
     const text = "Hello, Maurizio!";
     const result_text = "Hello, from Maurizio!";
-    const node = try Node.fromText(allocator, 10, text);
+    const node = try Node.fromText(allocator, text);
     defer node.deinit(allocator);
 
-    try node.insert(allocator, 10, 7, "from ");
+    try node.insert(allocator, 7, "from ");
 
     var value = std.ArrayList(u8).init(allocator);
     defer value.deinit();
@@ -466,6 +585,69 @@ test "Inserting in a Node" {
     try std.testing.expectEqualStrings(result_text, value.items);
 }
 
+test "Creating a big Node should take less than 10ms" {
+    const allocator = std.testing.allocator;
+
+    const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 1000);
+
+    var timer = try Timer.start();
+
+    const node = try Node.fromText(allocator, &text);
+    defer node.deinit(allocator);
+
+    const elapsed: f64 = @floatFromInt(timer.read());
+
+    std.debug.print("CREATE - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
+
+    // This is just an arbitrary value for now, no idea of how long this should take tbh
+    try std.testing.expect(10 > elapsed / time.ns_per_ms);
+}
+
+test "Inserting in a big Node should take less than 50ms" {
+    const allocator = std.testing.allocator;
+
+    const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 1000);
+
+    const node = try Node.fromText(allocator, &text);
+    defer node.deinit(allocator);
+
+    const insert = [_]u8{'b'} ** (MAX_LEAF_SIZE * 10);
+
+    var timer = try Timer.start();
+
+    try node.insert(allocator, 5000, &insert);
+
+    const elapsed: f64 = @floatFromInt(timer.read());
+
+    std.debug.print("INSERT - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
+
+    // This is just an arbitrary value for now, no idea of how long this should take tbh
+    try std.testing.expect(50 > elapsed / time.ns_per_ms);
+}
+
+test "Inserting a single character in a big Node with enough room should take less than 50ms" {
+    const allocator = std.testing.allocator;
+
+    const text = [_]u8{'a'} ** ((MAX_LEAF_SIZE * 1000) - 2);
+
+    const node = try Node.fromText(allocator, &text);
+    defer node.deinit(allocator);
+
+    const insert = [_]u8{'b'};
+
+    var timer = try Timer.start();
+
+    try node.insert(allocator, (MAX_LEAF_SIZE * 1000) - 2, &insert);
+
+    const elapsed: f64 = @floatFromInt(timer.read());
+
+    std.debug.print("FAST INSERT - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
+
+    // This is just an arbitrary value for now, no idea of how long this should take tbh
+    try std.testing.expect(50 > elapsed / time.ns_per_ms);
+}
+
+// NOTE not for now
 // test "Inserting in a Node with enough space shouldn't create new nodes" {
 //     const allocator = std.testing.allocator;
 
@@ -490,20 +672,16 @@ test "Inserting in a Node" {
 test "Appending a Node with enough space shouldn't create new nodes" {
     const allocator = std.testing.allocator;
 
-    const text = "abcde";
+    const text_len: usize = @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0);
 
-    const node = try Node.fromText(allocator, 3, text);
+    const text = [_]u8{'a'} ** text_len;
+
+    const node = try Node.fromText(allocator, &text);
     defer node.deinit(allocator);
 
-    // const node_2 = try Node.fromText(allocator, 3, text);
-    // defer node_2.deinit(allocator);
-
-    try node.append(allocator, 3, "f");
-    // try node_2.insert(allocator, 3, 2, "f");
+    try node.append(allocator, "a");
 
     node.print(0);
-    // node_2.print(0);
 
-    try std.testing.expectEqual(2, node.depth);
-    // try std.testing.expectEqual(2, node_2.depth);
+    try std.testing.expectEqual(1, node.depth);
 }
