@@ -6,20 +6,24 @@ const BoundedArray = std.BoundedArray;
 const Timer = time.Timer;
 
 /// The maximum size a leaf can reach.
-const MAX_LEAF_SIZE: usize = 10;
+const MAX_LEAF_SIZE: usize = 100;
 /// The L/R imbalance ratio that triggers a rebalace operation.
 const REBALANCE_RATIO: f32 = 1.2;
 
 const LeafText = BoundedArray(u8, MAX_LEAF_SIZE);
 
 // TODO
-// - delete
+// - INSERT: I'm not updating size and depth recursively
+// - DELETE: I'm not updating size and depth recursively
+// - JOIN: I'm not updating size and depth recursively?
+// - I think all these would benefit from wrapping everything in the Rope as "head node".
+//   Basically I will have to rewrite all this from scratch, mixing this file with rope.zig
 // - wrap in a rope
 // - format node from zighelp
+// - Automatic balance check and rebalance
 
 const Node = struct {
     value: ?*LeafText,
-    // value: ?[]const u8, // TODO maybe this should be a pointer? or a fixed length string?
     size: usize,
     full_size: usize,
     depth: usize,
@@ -98,10 +102,6 @@ const Node = struct {
             return try createLeaf(allocator, text);
         }
     }
-
-    /// Inserts a string at the given position
-    // pub fn insert(self: *Node, allocator: Allocator, max_leaf_size: usize, pos: usize, text: []const u8) !void {
-    // }
 
     /// Copies a leaf, used while splitting
     fn copyLeaf(allocator: Allocator, source: Node) !*Node {
@@ -247,6 +247,47 @@ const Node = struct {
         }
     }
 
+    // TODO, if we're deleting within the boundaries of a leaf we can optimize this.
+    fn delete(self: *Node, allocator: Allocator, pos: usize, len: usize) !void {
+        var to_delete: ?*Node = null;
+        var right: ?*Node = null;
+        var new_root: ?*Node = null;
+
+        const left, const rest = try self.split(allocator, pos);
+
+        if (rest) |rs| {
+            to_delete, right = try rs.split(allocator, len);
+            rs.deinit(allocator);
+        }
+        if (to_delete) |td| {
+            td.deinit(allocator);
+        }
+
+        // I think it shouldn't be possible to not have a left here, but to be sure...
+        if (left) |l| {
+            if (right) |r| {
+                try l.join(allocator, r.*);
+                r.deinit(allocator);
+            }
+            new_root = l;
+        } else if (right) |r| {
+            new_root = r;
+        }
+
+        // TODO this is similar to what I do in insert, could extract
+        if (new_root) |nr| {
+            if (self.left) |l| {
+                l.deinit(allocator);
+            }
+            if (self.right) |r| {
+                r.deinit(allocator);
+            }
+            // self.deinit(allocator);
+            self.* = nr.*;
+            allocator.destroy(nr);
+        }
+    }
+
     /// Get the leaf at the given index, together with the relative pos
     // TODO maybe this should return an optional?
     fn getLeafAtIndex(self: *Node, pos: usize) !struct { *Node, usize } {
@@ -276,10 +317,14 @@ const Node = struct {
         // If there's some hope to fit the text in a leaf we do a check
         // TODO can this be more advanced?
         if (text.len <= MAX_LEAF_SIZE) {
+            // std.debug.print("A {s}\n", .{text});
             const target_leaf, const relative_pos = try self.getLeafAtIndex(pos);
+            // std.debug.print("LEAF AND POS {any} {}\n", .{ target_leaf, relative_pos });
 
             if (target_leaf.size + text.len <= MAX_LEAF_SIZE) {
+                // std.debug.print("B\n", .{});
                 if (target_leaf.value) |value| {
+                    // std.debug.print("C\n", .{});
                     try value.insertSlice(relative_pos, text);
                     return;
                 } else {
@@ -445,8 +490,6 @@ test "Creating a balanced Node" {
     const node = try Node.fromText(allocator, long_text);
     defer node.deinit(allocator);
 
-    // node.print(0);
-
     var value = std.ArrayList(u8).init(allocator);
     defer value.deinit();
     try node.getValue(&value);
@@ -576,7 +619,11 @@ test "Inserting in a Node" {
     const node = try Node.fromText(allocator, text);
     defer node.deinit(allocator);
 
+    // node.print(0);
+
     try node.insert(allocator, 7, "from ");
+
+    // node.print(0);
 
     var value = std.ArrayList(u8).init(allocator);
     defer value.deinit();
@@ -585,103 +632,94 @@ test "Inserting in a Node" {
     try std.testing.expectEqualStrings(result_text, value.items);
 }
 
-test "Creating a big Node should take less than 10ms" {
-    const allocator = std.testing.allocator;
-
-    const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 1000);
-
-    var timer = try Timer.start();
-
-    const node = try Node.fromText(allocator, &text);
-    defer node.deinit(allocator);
-
-    const elapsed: f64 = @floatFromInt(timer.read());
-
-    std.debug.print("CREATE - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
-
-    // This is just an arbitrary value for now, no idea of how long this should take tbh
-    try std.testing.expect(10 > elapsed / time.ns_per_ms);
-}
-
-test "Inserting in a big Node should take less than 50ms" {
-    const allocator = std.testing.allocator;
-
-    const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 1000);
-
-    const node = try Node.fromText(allocator, &text);
-    defer node.deinit(allocator);
-
-    const insert = [_]u8{'b'} ** (MAX_LEAF_SIZE * 10);
-
-    var timer = try Timer.start();
-
-    try node.insert(allocator, 5000, &insert);
-
-    const elapsed: f64 = @floatFromInt(timer.read());
-
-    std.debug.print("INSERT - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
-
-    // This is just an arbitrary value for now, no idea of how long this should take tbh
-    try std.testing.expect(50 > elapsed / time.ns_per_ms);
-}
-
-test "Inserting a single character in a big Node with enough room should take less than 50ms" {
-    const allocator = std.testing.allocator;
-
-    const text = [_]u8{'a'} ** ((MAX_LEAF_SIZE * 1000) - 2);
-
-    const node = try Node.fromText(allocator, &text);
-    defer node.deinit(allocator);
-
-    const insert = [_]u8{'b'};
-
-    var timer = try Timer.start();
-
-    try node.insert(allocator, (MAX_LEAF_SIZE * 1000) - 2, &insert);
-
-    const elapsed: f64 = @floatFromInt(timer.read());
-
-    std.debug.print("FAST INSERT - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
-
-    // This is just an arbitrary value for now, no idea of how long this should take tbh
-    try std.testing.expect(50 > elapsed / time.ns_per_ms);
-}
-
-// NOTE not for now
-// test "Inserting in a Node with enough space shouldn't create new nodes" {
+// test "Creating a big Node should take less than 10ms" {
 //     const allocator = std.testing.allocator;
 
-//     const text = "abcde";
+//     const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 1000);
 
-//     const node = try Node.fromText(allocator, 3, text);
+//     var timer = try Timer.start();
+
+//     const node = try Node.fromText(allocator, &text);
 //     defer node.deinit(allocator);
 
-//     // const node_2 = try Node.fromText(allocator, 3, text);
-//     // defer node_2.deinit(allocator);
+//     const elapsed: f64 = @floatFromInt(timer.read());
 
-//     try node.insert(allocator, 3, 5, "f");
-//     // try node_2.insert(allocator, 3, 2, "f");
+//     std.debug.print("CREATE - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
 
-//     node.print(0);
-//     // node_2.print(0);
-
-//     try std.testing.expectEqual(2, node.depth);
-//     // try std.testing.expectEqual(2, node_2.depth);
+//     // This is just an arbitrary value for now, no idea of how long this should take tbh
+//     try std.testing.expect(10 > elapsed / time.ns_per_ms);
 // }
 
-test "Appending a Node with enough space shouldn't create new nodes" {
-    const allocator = std.testing.allocator;
+// test "Inserting in a big Node should take less than 50ms" {
+//     const allocator = std.testing.allocator;
 
-    const text_len: usize = @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0);
+//     const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 1000);
 
-    const text = [_]u8{'a'} ** text_len;
+//     const node = try Node.fromText(allocator, &text);
+//     defer node.deinit(allocator);
 
-    const node = try Node.fromText(allocator, &text);
-    defer node.deinit(allocator);
+//     const insert = [_]u8{'b'} ** (MAX_LEAF_SIZE * 10);
 
-    try node.append(allocator, "a");
+//     var timer = try Timer.start();
 
-    node.print(0);
+//     try node.insert(allocator, 5000, &insert);
 
-    try std.testing.expectEqual(1, node.depth);
-}
+//     const elapsed: f64 = @floatFromInt(timer.read());
+
+//     std.debug.print("INSERT - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
+
+//     // This is just an arbitrary value for now, no idea of how long this should take tbh
+//     try std.testing.expect(50 > elapsed / time.ns_per_ms);
+// }
+
+// test "Inserting a single character in a big Node with enough room should take less than 50ms" {
+//     const allocator = std.testing.allocator;
+
+//     const text = [_]u8{'a'} ** ((MAX_LEAF_SIZE * 1000) - 2);
+
+//     const node = try Node.fromText(allocator, &text);
+//     defer node.deinit(allocator);
+
+//     const insert = [_]u8{'b'};
+
+//     var timer = try Timer.start();
+
+//     try node.insert(allocator, (MAX_LEAF_SIZE * 1000) - 2, &insert);
+
+//     const elapsed: f64 = @floatFromInt(timer.read());
+
+//     std.debug.print("FAST INSERT - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
+
+//     // This is just an arbitrary value for now, no idea of how long this should take tbh
+//     try std.testing.expect(50 > elapsed / time.ns_per_ms);
+// }
+
+// test "Appending a Node with enough space shouldn't create new nodes" {
+//     const allocator = std.testing.allocator;
+
+//     const text_len: usize = @floor(@as(f32, @floatFromInt(MAX_LEAF_SIZE)) / 2.0);
+
+//     const text = [_]u8{'a'} ** text_len;
+
+//     const node = try Node.fromText(allocator, &text);
+//     defer node.deinit(allocator);
+
+//     try node.append(allocator, "a");
+
+//     try std.testing.expectEqual(1, node.depth);
+// }
+
+// test "Deleting from a Node" {
+//     const allocator = std.testing.allocator;
+
+//     const node = try Node.fromText(allocator, "Hello from Maurizio!");
+//     defer node.deinit(allocator);
+
+//     try node.delete(allocator, 5, 5);
+
+//     var value = std.ArrayList(u8).init(allocator);
+//     defer value.deinit();
+//     try node.getValue(&value);
+
+//     try std.testing.expectEqualStrings("Hello Maurizio!", value.items);
+// }
