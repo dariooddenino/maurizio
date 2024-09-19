@@ -6,14 +6,16 @@ const Key = vaxis.Key;
 const Vaxis = vaxis.Vaxis;
 const Event = @import("main.zig").Event;
 
-// TODO I think I need a more general "Buffer" object to hold cursor, Rope, etc.
+// NOTE the whole way I'm handling movement is completely inefficient.
 const Cursor = struct {
     x: usize = 0,
     y: usize = 0,
+    // The actual position in the Rope
+    pos: usize = 0,
     // TODO not used right now
-    shape: Cell.CursorShape = .block,
+    // shape: Cell.CursorShape = .block,
     // The grapheme index of the cursor. Am I actually using it?
-    grapheme_idx: usize = 0,
+    // grapheme_idx: usize = 0,
 
     pub fn toNewLine(self: *Cursor) void {
         self.y += 1;
@@ -37,18 +39,18 @@ const Cursor = struct {
     }
 };
 
-// An attempt at keeping track of how long all lines are.
-// TODO I think a better idea is to create the rows and then use them to print as well.
-// Need to figure out how to handle this.
-const Line = struct {
-    allocator: std.mem.Allocator,
-    rows: std.ArrayList(usize),
+/// An attempt at keeping track of how long all lines are.
+// const Lines = struct {
+//     allocator: std.mem.Allocator,
+//     rows: std.ArrayList(usize), // Should we have more length?
 
-    // pub fn init(allocator: std.mem.Allocator) !RowsMeta {
-    //   const rows = std.ArrayList.init(allocator);
+//     // pub fn init(allocator: std.mem.Allocator) !RowsMeta {
+//     //   const rows = std.ArrayList.init(allocator);
 
-    // }
-};
+//     // }
+// };
+
+const Lines = std.ArrayList(usize);
 
 pub const Buffer = struct {
     allocator: std.mem.Allocator,
@@ -56,6 +58,7 @@ pub const Buffer = struct {
     // I'm using this to go around the value lifetime, but it feels so bad.
     rope_l: std.ArrayList(u8),
     cursor: *Cursor,
+    lines: Lines,
 
     pub fn initEmpty(allocator: std.mem.Allocator) !Buffer {
         const rope = try allocator.create(Rope);
@@ -63,16 +66,19 @@ pub const Buffer = struct {
         const cursor = try allocator.create(Cursor);
         cursor.* = Cursor{};
         const rope_l = std.ArrayList(u8).init(allocator);
+        const lines = Lines.init(allocator);
 
         return .{
             .allocator = allocator,
             .rope = rope,
             .cursor = cursor,
             .rope_l = rope_l,
+            .lines = lines,
         };
     }
 
     pub fn deinit(self: *Buffer) void {
+        self.lines.deinit();
         self.rope.deinit();
         self.rope_l.deinit();
         self.allocator.destroy(self.rope);
@@ -90,6 +96,14 @@ pub const Buffer = struct {
 
         var msg_iter = vx.unicode.graphemeIterator(content);
 
+        // I guess the idea here is:
+        // - store the lines layout
+        // - get the current position of the cursor
+        // -
+
+        // Reinitialize the lines
+        self.lines.clearAndFree();
+
         const Pos = struct { x: usize = 0, y: usize = 0 };
         var pos: Pos = .{};
         var byte_index: usize = 0;
@@ -106,6 +120,7 @@ pub const Buffer = struct {
                 if (index == content.len - 1) {
                     break;
                 }
+                try self.lines.append(index);
                 pos.y += 1;
                 pos.x = 0;
                 continue;
@@ -122,7 +137,8 @@ pub const Buffer = struct {
             });
 
             index += 1;
-            if (index == self.cursor.grapheme_idx) self.cursor.x = pos.x;
+            // I don't think I'm using this
+            // if (index == self.cursor.grapheme_idx) self.cursor.x = pos.x;
         }
     }
 
