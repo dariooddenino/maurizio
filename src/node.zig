@@ -313,39 +313,35 @@ pub const Node = struct {
     /// Inserts a String in the given position
     pub fn insert(self: *Node, allocator: Allocator, pos: usize, text: []const u8) !void {
         // If there's some hope to fit the text in a leaf we do a check
-        // TODO can this be more advanced?
-        if (text.len <= MAX_LEAF_SIZE) {
-            const target_leaf, const relative_pos = try self.getLeafAtIndex(pos);
+        // NOTE disabled for now because this skips the join, thus resulting in a wrong state
+        // where the sizes and depths are not correct anymore.
+        // if (text.len <= MAX_LEAF_SIZE) {
+        //     const target_leaf, const relative_pos = try self.getLeafAtIndex(pos);
+        //     std.debug.print("\nInserting {s} at relative pos {}\n", .{ text, relative_pos });
 
-            // const valuez = blk: {
-            //     if (target_leaf.value) |value| {
-            //         break :blk value.constSlice();
-            //     } else {
-            //         // NOTE this looks suspicious
-            //         break :blk "";
-            //     }
-            // };
+        //     // TODO the problem is that here we're updating without splitting,
+        //     // and thus without joining.
+        //     // Joining is what takes care of updating the sizes/depths recursively for us.
+        //     if (target_leaf.size + text.len <= MAX_LEAF_SIZE) {
+        //         if (target_leaf.value) |value| {
+        //             std.debug.print("LEAF VAL {s}\n", .{value.constSlice()});
+        //             // if (pos != relative_pos and relative_pos == 0)
+        //             //     std.debug.print("\n\nINSERTING IN TARGET LEAF AT POS {}\n\n", .{relative_pos});
+        //             // For some reason this fails sometimes?
+        //             // TODO this doesn't work, I have no idea why
+        //             try value.insertSlice(relative_pos, text);
+        //             // try value.appendSlice(text);
 
-            // TODO the bug here is that relative_pos never appears to be 0?
-            // TODO the problem is that the second insert after the "first one" in the new leaf doesn't update the size.
-            if (target_leaf.size + text.len <= MAX_LEAF_SIZE) {
-                if (target_leaf.value) |value| {
-                    // if (pos != relative_pos and relative_pos == 0)
-                    //     std.debug.print("\n\nINSERTING IN TARGET LEAF AT POS {}\n\n", .{relative_pos});
-                    // For some reason this fails sometimes?
-                    // TODO this doesn't work, I have no idea why
-                    try value.insertSlice(relative_pos, text);
-
-                    // TODO is this enough to fix the insertion problem?
-                    target_leaf.size += text.len;
-                    target_leaf.full_size += text.len;
-                    return;
-                } else {
-                    // NOTE probably not possible?
-                    return error.OutOfBounds;
-                }
-            }
-        }
+        //             // TODO is this enough to fix the insertion problem?
+        //             target_leaf.size += text.len;
+        //             target_leaf.full_size += text.len;
+        //             return;
+        //         } else {
+        //             // NOTE probably not possible?
+        //             return error.OutOfBounds;
+        //         }
+        //     }
+        // }
 
         // This clones the sub nodes, so we have the original, and two halves copies
         const left_split, const right_split = try self.split(allocator, pos);
@@ -581,57 +577,59 @@ pub const Node = struct {
 //     unreachable;
 // }
 
-// test "Splitting and rejoining a Node" {
-//     const allocator = std.testing.allocator;
+test "Splitting and rejoining a Node" {
+    const allocator = std.testing.allocator;
 
-//     const text = "Hello, from Maurizio!";
-//     const node = try Node.fromText(allocator, text);
-//     defer node.deinit(allocator);
+    const text = "Hello, from Maurizio!";
+    const node = try Node.fromText(allocator, text);
+    defer node.deinit(allocator);
 
-//     const left, const right = try node.split(allocator, 8);
-//     if (left) |l| {
-//         if (right) |r| {
-//             defer l.deinit(allocator);
-//             defer r.deinit(allocator);
+    const left, const right = try node.split(allocator, 8);
+    if (left) |l| {
+        if (right) |r| {
+            defer l.deinit(allocator);
+            defer r.deinit(allocator);
 
-//             try l.join(allocator, r.*);
+            try l.join(allocator, r.*);
 
-//             var value = std.ArrayList(u8).init(allocator);
-//             defer value.deinit();
-//             try l.getValue(&value);
+            var value = std.ArrayList(u8).init(allocator);
+            defer value.deinit();
+            try l.getValue(&value);
 
-//             try std.testing.expectEqual(1, l.getBalance());
-//             try std.testing.expectEqualStrings(text, value.items);
-//             return;
-//         }
-//     }
-//     unreachable;
-// }
+            try std.testing.expectEqual(1, l.getBalance());
+            try std.testing.expectEqualStrings(text, value.items);
+            return;
+        }
+    }
+    unreachable;
+}
 
-// test "Inserting in a Node" {
-//     const allocator = std.testing.allocator;
+test "Inserting in a Node" {
+    const allocator = std.testing.allocator;
 
-//     const text = "Hello, Maurizio!";
-//     const result_text = "Hello, from Maurizio!";
-//     const node = try Node.fromText(allocator, text);
-//     defer node.deinit(allocator);
+    const text = "Hello, Maurizio!";
+    const result_text = "Hello, from Maurizio!";
+    const node = try Node.fromText(allocator, text);
+    defer node.deinit(allocator);
 
-//     // node.print(0);
+    // node.print(0);
 
-//     // std.debug.print("\n==\n", .{});
+    // std.debug.print("\n==\n", .{});
 
-//     try node.insert(allocator, 7, "from ");
+    try node.insert(allocator, 7, "from ");
 
-//     // node.print(0);
+    // node.print(0);
 
-//     var value = std.ArrayList(u8).init(allocator);
-//     defer value.deinit();
-//     try node.getValue(&value);
+    var value = std.ArrayList(u8).init(allocator);
+    defer value.deinit();
+    try node.getValue(&value);
 
-//     try std.testing.expectEqualStrings(result_text, value.items);
-// }
+    try std.testing.expectEqualStrings(result_text, value.items);
+}
 
-// test "Creating a big Node should take less than 10ms" {
+// NOTE all these tests are way too arbitrary. Maybe I should compare it against
+// the time it takes for an array structure?
+// test "Creating a big Node should take less than 15ms" {
 //     const allocator = std.testing.allocator;
 
 //     const text = [_]u8{'a'} ** (MAX_LEAF_SIZE * 1000);
@@ -646,7 +644,7 @@ pub const Node = struct {
 //     std.debug.print("CREATE - Elapsed is: {d:.3}ms\n", .{elapsed / time.ns_per_ms});
 
 //     // This is just an arbitrary value for now, no idea of how long this should take tbh
-//     try std.testing.expect(10 > elapsed / time.ns_per_ms);
+//     try std.testing.expect(15 > elapsed / time.ns_per_ms);
 // }
 
 // test "Inserting in a big Node should take less than 50ms" {
@@ -693,6 +691,7 @@ pub const Node = struct {
 //     try std.testing.expect(50 > elapsed / time.ns_per_ms);
 // }
 
+// NOTE disabled for now
 // test "Appending a Node with enough space shouldn't create new nodes" {
 //     const allocator = std.testing.allocator;
 
@@ -723,21 +722,27 @@ test "Deleting from a Node" {
     try std.testing.expectEqualStrings("Hello Maurizio!", value.items);
 }
 
-test "Appending on a new leaf" {
-    const allocator = std.testing.allocator;
+// NOTE this test was here for my fast insert optimization, which is currently disabled.
+// test "Appending on a new leaf" {
+//     const allocator = std.testing.allocator;
 
-    const node = try Node.fromText(allocator, "1234567890");
-    defer node.deinit(allocator);
+//     const node = try Node.fromText(allocator, "1234567890");
+//     defer node.deinit(allocator);
 
-    // node.print(0);
-    try node.append(allocator, "a");
-    // node.print(0);
-    try node.append(allocator, "b"); // This doesn't update the size correctly, making it fail // This doesn't update the size correctly, making it fail.
-    // node.print(0);
+//     // node.print(0);
+//     try node.append(allocator, "a");
+//     // node.print(0);
 
-    var value = std.ArrayList(u8).init(allocator);
-    defer value.deinit();
-    try node.getValue(&value);
+//     // const leaf, const pos = try node.getLeafAtIndex(11);
 
-    try std.testing.expectEqualStrings("1234567890ab", value.items);
-}
+//     // leaf.print(0);
+//     // std.debug.print("\n\nRESULT POS {}\n", .{pos});
+//     try node.append(allocator, "b"); // This doesn't update the size correctly, making it fail // This doesn't update the size correctly, making it fail.
+//     node.print(0);
+
+//     var value = std.ArrayList(u8).init(allocator);
+//     defer value.deinit();
+//     try node.getValue(&value);
+
+//     try std.testing.expectEqualStrings("1234567890ab", value.items);
+// }

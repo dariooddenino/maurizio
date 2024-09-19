@@ -132,7 +132,9 @@ pub const Buffer = struct {
                 if (key.matches(Key.backspace, .{})) {
                     // self.deleteBeforeCursor();
                     // To delete properly I have to to go from .{x, y} to pos, which I can't do right now.
-                    try self.rope.deleteLast();
+                    // try self.rope.deleteLast();
+                    // TODO don't try to go on new lines!
+                    try self.rope.delete(self.cursor.x - 1, self.cursor.x);
                     self.cursor.moveLeft();
                 } else if (key.matches(Key.delete, .{}) or key.matches('d', .{ .ctrl = true })) {
                     // self.deleteAfterCursor();
