@@ -6,36 +6,82 @@ const Key = vaxis.Key;
 const Vaxis = vaxis.Vaxis;
 const Event = @import("main.zig").Event;
 
-// NOTE the whole way I'm handling movement is completely inefficient.
-const Cursor = struct {
+// TODO going to new lines is slightly bugged
+// TODO when crashing the terminal is not returned to normal
+
+const XY = struct {
     x: usize = 0,
     y: usize = 0,
+};
+
+// NOTE the whole way I'm handling movement is completely inefficient.
+const Cursor = struct {
+    xy: XY,
     // The actual position in the Rope
     pos: usize = 0,
     // TODO not used right now
     // shape: Cell.CursorShape = .block,
     // The grapheme index of the cursor. Am I actually using it?
     // grapheme_idx: usize = 0,
+    lines: *Lines,
 
+    pub fn updateXY(self: *Cursor) void {
+        self.xy = self.posToXY();
+    }
+
+    pub fn posToXY(self: *Cursor) XY {
+        var line_index: usize = 0;
+        var remaining_pos = self.pos;
+        for (self.lines.items, 0..) |line_length, index| {
+            if (remaining_pos > line_length) {
+                remaining_pos -= line_length;
+            } else {
+                line_index = index;
+                break;
+            }
+        }
+
+        return XY{ .x = remaining_pos, .y = line_index };
+    }
+
+    pub fn xYToPos(self: *Cursor, xy: XY) usize {
+        var curr_pos: usize = 0;
+        for (self.lines.items, 0..) |line_length, i| {
+            if (i < xy.y) {
+                curr_pos += line_length;
+            } else {
+                curr_pos += xy.x;
+                break;
+            }
+        }
+        return curr_pos;
+    }
+
+    // Get the current pos, get the target pos, find the difference
     pub fn toNewLine(self: *Cursor) void {
-        self.y += 1;
-        self.x = 0;
+        const xy = self.posToXY();
+        const target_x = 0;
+        const target_y = xy.y + 1;
+        self.pos = self.xYToPos(XY{ .x = target_x, .y = target_y });
     }
 
     pub fn moveRight(self: *Cursor) void {
-        self.x += 1;
+        self.pos += 1;
     }
 
     pub fn moveLeft(self: *Cursor) void {
-        if (self.x > 0) self.x -= 1;
+        self.pos -= 1;
     }
 
     pub fn moveUp(self: *Cursor) void {
-        if (self.y > 0) self.y -= 1;
+        const xy = self.posToXY();
+        if (xy.y > 0)
+            self.pos = self.xYToPos(XY{ .x = xy.x, .y = xy.y - 1 });
     }
 
     pub fn moveDown(self: *Cursor) void {
-        self.y += 1;
+        const xy = self.posToXY();
+        self.pos = self.xYToPos(XY{ .x = xy.x, .y = xy.y + 1 });
     }
 };
 
@@ -58,15 +104,17 @@ pub const Buffer = struct {
     // I'm using this to go around the value lifetime, but it feels so bad.
     rope_l: std.ArrayList(u8),
     cursor: *Cursor,
-    lines: Lines,
+    lines: *Lines,
 
     pub fn initEmpty(allocator: std.mem.Allocator) !Buffer {
         const rope = try allocator.create(Rope);
         rope.* = try Rope.init(allocator, "");
+        const lines = try allocator.create(Lines);
+        lines.* = Lines.init(allocator);
         const cursor = try allocator.create(Cursor);
-        cursor.* = Cursor{};
+        const xy: XY = XY{ .x = 0, .y = 0 };
+        cursor.* = Cursor{ .lines = lines, .xy = xy };
         const rope_l = std.ArrayList(u8).init(allocator);
-        const lines = Lines.init(allocator);
 
         return .{
             .allocator = allocator,
@@ -78,11 +126,11 @@ pub const Buffer = struct {
     }
 
     pub fn deinit(self: *Buffer) void {
+        self.allocator.destroy(self.cursor);
         self.lines.deinit();
         self.rope.deinit();
         self.rope_l.deinit();
         self.allocator.destroy(self.rope);
-        self.allocator.destroy(self.cursor);
     }
 
     pub fn draw(self: *Buffer, vx: Vaxis, win: vaxis.Window) !void {
@@ -126,6 +174,8 @@ pub const Buffer = struct {
                 continue;
             }
 
+            self.cursor.updateXY();
+
             const width = win.gwidth(cluster);
             defer pos.x +|= width;
 
@@ -150,7 +200,7 @@ pub const Buffer = struct {
                     // To delete properly I have to to go from .{x, y} to pos, which I can't do right now.
                     // try self.rope.deleteLast();
                     // TODO don't try to go on new lines!
-                    try self.rope.delete(self.cursor.x - 1, self.cursor.x);
+                    try self.rope.delete(self.cursor.pos - 1, self.cursor.pos);
                     self.cursor.moveLeft();
                 } else if (key.matches(Key.delete, .{}) or key.matches('d', .{ .ctrl = true })) {
                     // self.deleteAfterCursor();

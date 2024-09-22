@@ -213,7 +213,7 @@ const Maurizio = struct {
         const child = win.initChild(0, 0, .expand, .expand);
         try self.buffer.draw(self.vx, child);
 
-        win.showCursor(self.buffer.cursor.x, self.buffer.cursor.y);
+        win.showCursor(self.buffer.cursor.xy.x, self.buffer.cursor.xy.y);
 
         // IS THIS USLESS?
         // try self.vx.render(self.tty.anyWriter());
