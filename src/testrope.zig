@@ -1,5 +1,4 @@
 const std = @import("std");
-const syntax = @import("syntax");
 
 const Allocator = std.mem.Allocator;
 const Node = @import("node.zig").Node;
@@ -35,10 +34,6 @@ pub const Rope = struct {
     /// Get the full value of the Rope
     pub fn getValue(self: *Rope) ![]const u8 {
         return try self.getValueRange(0, self.root.full_size);
-    }
-
-    pub fn get_parser(self: *Rope) !*syntax {
-        return syntax.create_file_type(self.allocator, try self.getValue(), "javascript");
     }
 
     /// Append at the end of the Rope

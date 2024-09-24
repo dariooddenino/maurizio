@@ -15,6 +15,13 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const clap_dep = b.dependency("clap", .{ .target = target, .optimize = optimize });
+    const themes_dep = b.dependency("themes", .{});
+    const syntax_dep = b.dependency("syntax", .{ .target = target, .optimize = optimize });
+    const tree_sitter_dep = b.dependency("tree-sitter", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const vaxis_dep = b.dependency("vaxis", .{ .target = target, .optimize = optimize });
 
     const exe = b.addExecutable(.{
@@ -23,6 +30,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe.root_module.addImport("clap", clap_dep.module("clap"));
+    exe.root_module.addImport("theme", themes_dep.module("theme"));
+    exe.root_module.addImport("themes", themes_dep.module("themes"));
+    exe.root_module.addImport("syntax", syntax_dep.module("syntax"));
+    exe.root_module.addImport("treez", tree_sitter_dep.module("treez"));
     exe.root_module.addImport("vaxis", vaxis_dep.module("vaxis"));
 
     // This declares intent for the executable to be installed into the

@@ -1,4 +1,5 @@
 const std = @import("std");
+const clap = @import("clap");
 const rope = @import("rope.zig");
 const node = @import("node.zig");
 const vaxis = @import("vaxis");
@@ -232,6 +233,29 @@ pub fn main() !void {
     }
 
     const allocator = gpa.allocator();
+
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help Display this help and exit.
+        \\<file>...  File to open.   
+    );
+
+    const parsers = comptime .{ .file = clap.parsers.string };
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, parsers, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{}) catch {};
+        std.process.exit(1);
+        return err;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0)
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+
+    // TODO do something with the file!
 
     // Initialize our application
     var app = try Maurizio.init(allocator);

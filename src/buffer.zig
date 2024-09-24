@@ -1,10 +1,17 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
 const Cell = vaxis.Cell;
+const Color = Cell.Color;
 const Rope = @import("rope.zig").Rope;
 const Key = vaxis.Key;
 const Vaxis = vaxis.Vaxis;
 const Event = @import("main.zig").Event;
+
+const treez = @import("treez");
+
+const syntax = @import("syntax");
+const Theme = @import("theme");
+const themes = @import("themes");
 
 // TODO going to new lines is slightly bugged
 // TODO when crashing the terminal is not returned to normal
@@ -12,6 +19,21 @@ const Event = @import("main.zig").Event;
 const XY = struct {
     x: usize = 0,
     y: usize = 0,
+};
+
+const Ctx = struct {
+    fg: Color,
+    bg: Color,
+    theme: Theme,
+
+    fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
+        _ = ctx;
+        _ = range;
+        _ = scope;
+        _ = id;
+        _ = idx;
+        return;
+    }
 };
 
 // NOTE the whole way I'm handling movement is completely inefficient.
@@ -116,6 +138,10 @@ pub const Buffer = struct {
         cursor.* = Cursor{ .lines = lines, .xy = xy };
         const rope_l = std.ArrayList(u8).init(allocator);
 
+        // TODO temporary hack to test syntax.
+        // This doesn't even update rope_l
+        try rope.append("const foo = (bar: int) => {\n  return bar + 1;\n}");
+
         return .{
             .allocator = allocator,
             .rope = rope,
@@ -152,6 +178,26 @@ pub const Buffer = struct {
         // Reinitialize the lines
         self.lines.clearAndFree();
 
+        // TODO ok so this builds the parser, which I have then to use somehow.
+        // https://github.com/neurocyte/zat/blob/master/src/main.zig
+        // it passes it together with theme to `render_file_type`.
+        const lang = try self.rope.get_parser();
+        // std.debug.print("parser\n\n {s} {s} {s}", .{ parser.file_type.name, parser.file_type.highlights, parser.file_type.icon });
+        defer lang.destroy();
+
+        const theme = blk: {
+            for (themes.themes) |theme| {
+                if (std.mem.eql(u8, theme.name, "default")) {
+                    break :blk theme;
+                }
+            }
+            unreachable;
+        };
+        // std.debug.print("theme {any}\n", .{theme});
+        // _ = theme;
+
+        // std.debug.print("\n{any}\n", .{theme});
+
         const Pos = struct { x: usize = 0, y: usize = 0 };
         var pos: Pos = .{};
         var byte_index: usize = 0;
@@ -179,15 +225,42 @@ pub const Buffer = struct {
             const width = win.gwidth(cluster);
             defer pos.x +|= width;
 
+            // TODO this styling is all very random for now
+            // const style = theme.editor_selection;
+
+            const range: ?syntax.Range = .{
+                .start_point = .{ .row = 0, .column = 0 },
+                .end_point = .{ .row = 0, .column = 0 },
+                // .start_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) },
+                // .end_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) + 1 },
+                .start_byte = 0,
+                .end_byte = 0,
+            };
+
+            var ctx: Ctx = .{
+                .theme = theme,
+                .fg = Color{ .index = 3 },
+                .bg = Color{ .index = 0 },
+            };
+
+            try lang.render(&ctx, Ctx.cb, range);
+
             win.writeCell(pos.x, pos.y, .{
                 .char = .{
                     .grapheme = cluster,
                     .width = width,
                 },
+                .style = .{
+                    .fg = ctx.fg,
+                },
+                // .style = .{
+                //     .fg = Color.rgbFromUint(style.fg orelse 0),
+                //     .bg = Color.rgbFromUint(style.bg orelse 0),
+                // },
             });
 
             index += 1;
-            // I don't think I'm using this
+            // I don't thiColor'm using this
             // if (index == self.cursor.grapheme_idx) self.cursor.x = pos.x;
         }
     }

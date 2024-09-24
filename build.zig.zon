@@ -23,6 +23,22 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/c0193e9247335a6c1688b946325060289405de2a.tar.gz",
+            .hash = "12207ee987ce045596cb992cfb15b0d6d9456e50d4721c3061c69dabc2962053644d",
+        },
+        .themes = .{
+            .url = "https://github.com/neurocyte/flow-themes/releases/download/master-803da089c5a0fc3b4513a7c34afe9bdaff83efdc/flow-themes.tar.gz",
+            .hash = "12208fa20104c3311e97c20e70d0a81a257f2c2e24f627616984e38dda309749b29a",
+        },
+        .syntax = .{
+            .url = "https://github.com/neurocyte/flow-syntax/archive/d5b5da509350ef946b33cfb5c04ede68e288545b.tar.gz",
+            .hash = "122074a1a0a073213ae65d3f09863d6cb0622e1dbacf6a85e09a343e306c9da44c3b",
+        },
+        .@"tree-sitter" = .{
+            .url = "https://github.com/neurocyte/tree-sitter/releases/download/master-876cc5a125cb822d44a9f94f6bde64fac66272ce/source.tar.gz",
+            .hash = "12208efbfead8c57adeabbd2293d6ed19e00f769e1d8aba0d544270479587c9f694a",
+        },
         .vaxis = .{
             .url = "git+https://github.com/rockorager/libvaxis?ref=main#d36ab043caf7cbb24cae1bd0346dd6b654df0653",
             .hash = "12206c252ee00b9dd0214989dfa35a6eea29ac7d65d4053817f161f4c23b6e09dd89",
