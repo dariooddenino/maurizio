@@ -21,19 +21,69 @@ const XY = struct {
     y: usize = 0,
 };
 
+// TODO insipred by zat, I will have to rewrite all of this.
 const Ctx = struct {
     fg: Color,
     bg: Color,
-    theme: Theme,
+    theme: *const Theme,
+    content: []const u8,
+    syntax: *syntax,
 
     fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
-        _ = ctx;
-        _ = range;
-        _ = scope;
-        _ = id;
         _ = idx;
+        const scope_segment = ctx.content[range.start_byte..range.end_byte];
+        // const style = getStyle(ctx.theme, scope, id);
+        if (getStyle(ctx.theme, scope, id)) |token| {
+            _ = scope_segment;
+            // std.debug.print("tken0\n {any}", .{token});
+            ctx.fg = Color.rgbFromUint(token.style.fg orelse 0); // ctx.syntax.file_type.color);
+            ctx.bg = Color.rgbFromUint(token.style.bg orelse 3);
+            // ctx.bg = token.style.bg;
+        } else {
+            ctx.fg = Color.rgbFromUint(ctx.syntax.file_type.color);
+        }
         return;
     }
+
+    fn getStyle(theme: *const Theme, scope: []const u8, id: u32) ?Theme.Token {
+        _ = id;
+        return findScopeStyle(theme, scope) orelse null;
+    }
+
+    fn findScopeStyle(theme: *const Theme, scope: []const u8) ?Theme.Token {
+        // return if (findScopeFallback(scope)) |tm_scope|
+        //     findScopeStyleNoFallback(theme, tm_scope) orelse findScopeStyleNoFallback(theme, scope)
+        // else
+        return findScopeStyleNoFallback(theme, scope);
+    }
+
+    fn findScopeStyleNoFallback(theme: *const Theme, scope: []const u8) ?Theme.Token {
+        var idx = theme.tokens.len - 1;
+        var done = false;
+        while (!done) : (if (idx == 0) {
+            done = true;
+        } else {
+            idx -= 1;
+        }) {
+            const token = theme.tokens[idx];
+            const name = themes.scopes[token.id];
+            if (name.len > scope.len)
+                continue;
+            if (std.mem.eql(u8, name, scope[0..name.len]))
+                return token;
+        }
+        return null;
+    }
+
+    // fn findScopeFallback(scope: []const u8) ?[]const u8 {
+    //     for (fallbacks) |fallback| {
+    //         if (fallback.ts.len > scope.len)
+    //             continue;
+    //         if (std.mem.eql(u8, fallback.ts, scope[0..fallback.ts.len]))
+    //             return fallback.tm;
+    //     }
+    //     return null;
+    // }
 };
 
 // NOTE the whole way I'm handling movement is completely inefficient.
@@ -228,22 +278,32 @@ pub const Buffer = struct {
             // TODO this styling is all very random for now
             // const style = theme.editor_selection;
 
+            const start_row: u32 = @intCast(pos.y);
+            const start_column: u32 = @intCast(pos.x);
+
+            // Naive range for now
             const range: ?syntax.Range = .{
-                .start_point = .{ .row = 0, .column = 0 },
-                .end_point = .{ .row = 0, .column = 0 },
+                .start_point = .{ .row = start_row, .column = start_column },
+                .end_point = .{ .row = start_row, .column = start_column + 1 },
                 // .start_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) },
                 // .end_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) + 1 },
                 .start_byte = 0,
                 .end_byte = 0,
             };
 
+            // std.debug.print("RANGE: {any}\n", .{range});
+
             var ctx: Ctx = .{
-                .theme = theme,
-                .fg = Color{ .index = 3 },
+                .theme = &theme,
+                .fg = Color{ .index = 0 },
                 .bg = Color{ .index = 0 },
+                .content = content,
+                .syntax = lang,
             };
 
             try lang.render(&ctx, Ctx.cb, range);
+
+            // std.debug.print("POS {any}, COL {any}\n\n", .{ pos, ctx.fg });
 
             win.writeCell(pos.x, pos.y, .{
                 .char = .{
@@ -252,6 +312,7 @@ pub const Buffer = struct {
                 },
                 .style = .{
                     .fg = ctx.fg,
+                    .bg = ctx.bg,
                 },
                 // .style = .{
                 //     .fg = Color.rgbFromUint(style.fg orelse 0),
