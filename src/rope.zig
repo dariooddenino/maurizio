@@ -38,7 +38,7 @@ pub const Rope = struct {
     }
 
     pub fn get_parser(self: *Rope) !*syntax {
-        return syntax.create_file_type(self.allocator, try self.getValue(), "javascript");
+        return syntax.create_file_type(self.allocator, try self.getValue(), "zig");
     }
 
     /// Append at the end of the Rope

@@ -1,4 +1,6 @@
 const std = @import("std");
+const buildin = @import("builtin");
+
 const clap = @import("clap");
 const rope = @import("rope.zig");
 const node = @import("node.zig");
@@ -56,9 +58,12 @@ const Maurizio = struct {
     buffer: *Buffer,
 
     pub fn init(allocator: std.mem.Allocator) !Maurizio {
-        const vx = try vaxis.init(allocator, .{});
+        var vx = try vaxis.init(allocator, .{});
         const buffer = try allocator.create(Buffer);
         buffer.* = try Buffer.initEmpty(allocator);
+        // TODO RGB?
+        vx.caps.kitty_graphics = true;
+        vx.caps.rgb = true;
         return .{
             .allocator = allocator,
             .should_quit = false,
@@ -70,6 +75,7 @@ const Maurizio = struct {
     }
 
     pub fn deinit(self: *Maurizio) void {
+        std.debug.print("\n\nDEINIT", .{});
         // Deinit takes an optional allocator. You can choose to pass an allocator
         // to clean up memory, or pass null if your application is shutting down
         // and let the OS clean up the memory
@@ -221,6 +227,11 @@ const Maurizio = struct {
     }
 };
 
+pub const application_name = "maurizio";
+pub const application_title = "Maurizio";
+pub const application_subtext = "an almost functioning text editor";
+pub const application_description = application_title ++ ": " ++ application_subtext;
+
 /// Kepp our main function small. Typycally handling arg parsing and initialization only
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -239,7 +250,15 @@ pub fn main() !void {
         \\<file>...  File to open.   
     );
 
-    const parsers = comptime .{ .file = clap.parsers.string };
+    if (buildin.os.tag == .linux) {
+        // drain stdin so we don't pickup junk from previous application/shell
+        _ = std.os.linux.syscall3(.ioctl, @as(usize, @bitCast(@as(isize, std.posix.STDIN_FILENO))), std.os.linux.T.CFLSH, 0);
+    }
+
+    const parsers = comptime .{
+        .file = clap.parsers.string,
+    };
+
     var diag = clap.Diagnostic{};
     var res = clap.parse(clap.Help, &params, parsers, .{
         .diagnostic = &diag,

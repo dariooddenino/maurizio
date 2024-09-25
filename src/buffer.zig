@@ -36,8 +36,8 @@ const Ctx = struct {
         if (getStyle(ctx.theme, scope, id)) |token| {
             _ = scope_segment;
             // std.debug.print("tken0\n {any}", .{token});
-            ctx.fg = Color.rgbFromUint(token.style.fg orelse 0); // ctx.syntax.file_type.color);
-            ctx.bg = Color.rgbFromUint(token.style.bg orelse 3);
+            ctx.fg = Color.rgbFromUint(token.style.fg orelse ctx.syntax.file_type.color); // ctx.syntax.file_type.color);
+            ctx.bg = Color.rgbFromUint(token.style.bg orelse 35);
             // ctx.bg = token.style.bg;
         } else {
             ctx.fg = Color.rgbFromUint(ctx.syntax.file_type.color);
@@ -190,7 +190,8 @@ pub const Buffer = struct {
 
         // TODO temporary hack to test syntax.
         // This doesn't even update rope_l
-        try rope.append("const foo = (bar: int) => {\n  return bar + 1;\n}");
+        // try rope.append("const foo = (bar) => {\n  let baz = 2;\n  return Math.max(bar, baz);\n}");
+        try rope.append("fn write_html_preamble(writer: Writer, style: Theme.style) !void {\n}");
 
         return .{
             .allocator = allocator,
@@ -204,6 +205,7 @@ pub const Buffer = struct {
     pub fn deinit(self: *Buffer) void {
         self.allocator.destroy(self.cursor);
         self.lines.deinit();
+        self.allocator.destroy(self.lines);
         self.rope.deinit();
         self.rope_l.deinit();
         self.allocator.destroy(self.rope);
@@ -237,7 +239,7 @@ pub const Buffer = struct {
 
         const theme = blk: {
             for (themes.themes) |theme| {
-                if (std.mem.eql(u8, theme.name, "default")) {
+                if (std.mem.eql(u8, theme.name, "ayu-dark")) {
                     break :blk theme;
                 }
             }
@@ -284,7 +286,7 @@ pub const Buffer = struct {
             // Naive range for now
             const range: ?syntax.Range = .{
                 .start_point = .{ .row = start_row, .column = start_column },
-                .end_point = .{ .row = start_row, .column = start_column + 1 },
+                .end_point = .{ .row = start_row, .column = start_column + 10 },
                 // .start_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) },
                 // .end_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) + 1 },
                 .start_byte = 0,
