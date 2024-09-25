@@ -23,25 +23,71 @@ const XY = struct {
 
 // TODO insipred by zat, I will have to rewrite all of this.
 const Ctx = struct {
-    fg: Color,
-    bg: Color,
+    win: vaxis.Window,
+    cursor: *Cursor,
     theme: *const Theme,
     content: []const u8,
     syntax: *syntax,
 
+    fn getToken(theme: *const Theme, scope: []const u8) ?Theme.Token {
+        var idx = theme.tokens.len - 1;
+        var done = false;
+        while (!done) : (if (idx == 0) {
+            done = true;
+        } else {
+            idx -= 1;
+        }) {
+            const token = theme.tokens[idx];
+            const name = themes.scopes[token.id];
+            if (name.len > scope.len)
+                continue;
+            if (std.mem.eql(u8, name, scope[0..name.len]))
+                return token;
+        }
+        return null;
+    }
+
+    fn writeStyle(ctx: *@This(), range: syntax.Range, style: Theme.Style) !void {
+        // It looks like the token, and range are ok
+        // _ = style;
+        const style_ = .{
+            // .fg = .{ .index = 8 },
+            .fg = Color.rgbFromUint(style.fg orelse 3),
+            .bg = Color.rgbFromUint(style.bg orelse 3),
+        };
+
+        // std.debug.print("\n applying style {} to {} {}\n", .{ style_, range.start_byte, range.end_byte });
+
+        // const cell = ctx.win.readCell(0, 0);
+
+        // if (cell) |c| {
+        //     ctx.win.writeCell(0, 0, .{ .style = style_, .char = c.char });
+        // }
+
+        // TODO maybe I can do this not char by char...
+        for (range.start_byte..range.end_byte) |pos| {
+            const xy = ctx.cursor.customPosToXY(pos);
+            // std.debug.print("\norig fg {?} vax fg {} pos {} XY {}\n", .{ style.fg, style_.fg, pos, xy });
+
+            const cell = ctx.win.readCell(xy.x, xy.y);
+
+            if (cell) |c| {
+                ctx.win.writeCell(xy.x, xy.y, .{ .style = style_, .char = c.char });
+            }
+        }
+    }
+
     fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
         _ = idx;
-        const scope_segment = ctx.content[range.start_byte..range.end_byte];
-        // const style = getStyle(ctx.theme, scope, id);
         if (getStyle(ctx.theme, scope, id)) |token| {
-            _ = scope_segment;
-            // std.debug.print("tken0\n {any}", .{token});
-            ctx.fg = Color.rgbFromUint(token.style.fg orelse ctx.syntax.file_type.color); // ctx.syntax.file_type.color);
-            ctx.bg = Color.rgbFromUint(token.style.bg orelse 35);
-            // ctx.bg = token.style.bg;
+            // std.debug.print("\n GOT STYLE\n", .{});
+            ctx.writeStyle(range, token.style) catch return error.Stop;
         } else {
-            ctx.fg = Color.rgbFromUint(ctx.syntax.file_type.color);
+            // NOTE: I don't need this now because I'm only applying style.
+            // std.debug.print("\n NO STYLE \n", .{});
+            // ctx.writeStyle(range, ctx.theme.editor) catch return error.Stop;
         }
+
         return;
     }
 
@@ -67,10 +113,16 @@ const Ctx = struct {
         }) {
             const token = theme.tokens[idx];
             const name = themes.scopes[token.id];
+            if (token.id == 189) {
+                // std.debug.print("\nscopes {any}", .{themes.scopes});
+                //     std.debug.print("\nTOKEN {any}", .{theme.tokens});
+            }
             if (name.len > scope.len)
                 continue;
-            if (std.mem.eql(u8, name, scope[0..name.len]))
+            if (std.mem.eql(u8, name, scope[0..name.len])) {
+                // std.debug.print("\n token name {s} {s}\n", .{ name, scope });
                 return token;
+            }
         }
         return null;
     }
@@ -102,8 +154,25 @@ const Cursor = struct {
     }
 
     pub fn posToXY(self: *Cursor) XY {
+        return self.customPosToXY(self.pos);
+        // var line_index: usize = 0;
+        // var remaining_pos = self.pos;
+        // for (self.lines.items, 0..) |line_length, index| {
+        //     if (remaining_pos > line_length) {
+        //         remaining_pos -= line_length;
+        //     } else {
+        //         line_index = index;
+        //         break;
+        //     }
+        // }
+
+        // return XY{ .x = remaining_pos, .y = line_index };
+    }
+
+    // TODO Better name?
+    pub fn customPosToXY(self: *Cursor, pos: usize) XY {
         var line_index: usize = 0;
-        var remaining_pos = self.pos;
+        var remaining_pos = pos;
         for (self.lines.items, 0..) |line_length, index| {
             if (remaining_pos > line_length) {
                 remaining_pos -= line_length;
@@ -190,8 +259,9 @@ pub const Buffer = struct {
 
         // TODO temporary hack to test syntax.
         // This doesn't even update rope_l
-        // try rope.append("const foo = (bar) => {\n  let baz = 2;\n  return Math.max(bar, baz);\n}");
-        try rope.append("fn write_html_preamble(writer: Writer, style: Theme.style) !void {\n}");
+        try rope.append("const foo = (bar) => {\n  let baz = 2;\n  return Math.max(bar, baz);\n}");
+        // try rope.append("let foo = 1;");
+        // try rope.append("fn write_html_preamble(writer: Writer, style: Theme.style) !void {\n}");
 
         return .{
             .allocator = allocator,
@@ -296,14 +366,15 @@ pub const Buffer = struct {
             // std.debug.print("RANGE: {any}\n", .{range});
 
             var ctx: Ctx = .{
+                .win = win,
                 .theme = &theme,
-                .fg = Color{ .index = 0 },
-                .bg = Color{ .index = 0 },
                 .content = content,
                 .syntax = lang,
+                .cursor = self.cursor,
             };
 
-            try lang.render(&ctx, Ctx.cb, range);
+            _ = range;
+            try lang.render(&ctx, Ctx.cb, null);
 
             // std.debug.print("POS {any}, COL {any}\n\n", .{ pos, ctx.fg });
 
@@ -311,10 +382,6 @@ pub const Buffer = struct {
                 .char = .{
                     .grapheme = cluster,
                     .width = width,
-                },
-                .style = .{
-                    .fg = ctx.fg,
-                    .bg = ctx.bg,
                 },
                 // .style = .{
                 //     .fg = Color.rgbFromUint(style.fg orelse 0),
