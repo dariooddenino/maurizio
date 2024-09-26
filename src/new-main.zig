@@ -110,24 +110,6 @@ const Ctx = struct {
             findScopeStyleNoFallback(ctx.theme, scope);
     }
 
-    // fn getToken(ctx: *@This(), scope: []const u8) ?Theme.Token {
-    //     var idx = ctx.theme.tokens.len - 1;
-    //     var done = false;
-    //     while (!done) : (if (idx == 0) {
-    //         done = true;
-    //     } else {
-    //         idx -= 1;
-    //     }) {
-    //         const token = ctx.theme.tokens[idx];
-    //         const name = themes.scopes[token.id];
-    //         if (name.len > scope.len)
-    //             continue;
-    //         if (std.mem.eql(u8, name, scope[0..name.len]))
-    //             return token;
-    //     }
-    //     return null;
-    // }
-
     fn writeStyled(ctx: *@This(), text: []const u8, style: Theme.Style) !void {
         const style_ = .{
             .fg = Color.rgbFromUint(style.fg orelse 3),
@@ -190,10 +172,9 @@ const App = struct {
     vx: vaxis.Vaxis,
     content: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator) !App {
+    pub fn init(allocator: std.mem.Allocator, content: []const u8) !App {
         const vx = try vaxis.init(allocator, .{});
         // const content: []const u8 = "const foo = (bar: int) => {\n  let baz = 2;\n  return bar + baz;\n}";
-        const content: []const u8 = "pub const Foo = union(enum) {\n  foo: usize,\n};\n";
         return .{
             .allocator = allocator,
             .should_quit = false,
@@ -324,10 +305,24 @@ pub fn main() !void {
     if (res.args.help != 0)
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
 
-    // Initialize our application
-    var app = try App.init(allocator);
-    defer app.deinit();
+    if (res.positionals.len > 0) {
+        for (res.positionals) |arg| {
+            const file = try std.fs.cwd().openFile(arg, .{ .mode = .read_only });
+            defer file.close();
+            const content = try file.readToEndAlloc(allocator, std.math.maxInt(u32));
+            defer allocator.free(content);
+            var app = try App.init(allocator, content);
+            defer app.deinit();
 
-    // Run the application
-    try app.run();
+            try app.run();
+        }
+    } else {
+        const content: []const u8 = "pub const Foo = union(enum) {\n  foo: usize,\n};\n";
+        // Initialize our application
+        var app = try App.init(allocator, content);
+        defer app.deinit();
+
+        // Run the application
+        try app.run();
+    }
 }
