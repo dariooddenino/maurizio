@@ -75,7 +75,7 @@ const Maurizio = struct {
     }
 
     pub fn deinit(self: *Maurizio) void {
-        std.debug.print("\n\nDEINIT", .{});
+        // std.debug.print("\n\nDEINIT", .{});
         // Deinit takes an optional allocator. You can choose to pass an allocator
         // to clean up memory, or pass null if your application is shutting down
         // and let the OS clean up the memory

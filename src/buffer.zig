@@ -30,6 +30,7 @@ const Ctx = struct {
     syntax: *syntax,
 
     fn getToken(theme: *const Theme, scope: []const u8) ?Theme.Token {
+        // std.debug.print("\nGETTING TOKEN {s}\n", .{scope});
         var idx = theme.tokens.len - 1;
         var done = false;
         while (!done) : (if (idx == 0) {
@@ -47,13 +48,13 @@ const Ctx = struct {
         return null;
     }
 
-    fn writeStyle(ctx: *@This(), range: syntax.Range, style: Theme.Style) !void {
+    fn writeStyle(ctx: *@This(), text: []const u8, range: syntax.Range, style: Theme.Style) !void {
         // It looks like the token, and range are ok
-        // _ = style;
+        _ = style;
         const style_ = .{
-            // .fg = .{ .index = 8 },
-            .fg = Color.rgbFromUint(style.fg orelse 3),
-            .bg = Color.rgbFromUint(style.bg orelse 3),
+            .fg = .{ .index = 8 },
+            // .fg = Color.rgbFromUint(style.fg orelse 3),
+            // .bg = Color.rgbFromUint(style.bg orelse 3),
         };
 
         // std.debug.print("\n applying style {} to {} {}\n", .{ style_, range.start_byte, range.end_byte });
@@ -65,67 +66,78 @@ const Ctx = struct {
         // }
 
         // TODO maybe I can do this not char by char...
-        for (range.start_byte..range.end_byte) |pos| {
-            const xy = ctx.cursor.customPosToXY(pos);
-            // std.debug.print("\norig fg {?} vax fg {} pos {} XY {}\n", .{ style.fg, style_.fg, pos, xy });
+        // for (range.start_byte..range.end_byte) |pos| {
+        // const xy = ctx.cursor.customPosToXY(pos);
 
-            const cell = ctx.win.readCell(xy.x, xy.y);
+        const xy = ctx.cursor.customPosToXY(range.start_byte);
+        // std.debug.print("\norig fg {?} vax fg {} pos {} XY {}\n", .{ style.fg, style_.fg, pos, xy });
 
-            if (cell) |c| {
-                ctx.win.writeCell(xy.x, xy.y, .{ .style = style_, .char = c.char });
-            }
-        }
+        // const cell = ctx.win.readCell(xy.x, xy.y);
+
+        // const relative_pos = pos - range.start_byte;
+        // if (cell) |c| {
+        ctx.win.writeCell(
+            xy.x,
+            xy.y,
+            .{
+                .style = style_,
+                .char = .{ .grapheme = text },
+            },
+        );
+        // }
+        // }
     }
 
     fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
         _ = idx;
-        if (getStyle(ctx.theme, scope, id)) |token| {
-            // std.debug.print("\n GOT STYLE\n", .{});
-            ctx.writeStyle(range, token.style) catch return error.Stop;
+        _ = id;
+        const scope_segment = ctx.content[range.start_byte..range.end_byte];
+        // _ = scope;
+        if (getToken(ctx.theme, scope)) |token| {
+            ctx.writeStyle(scope_segment, range, token.style) catch return error.Stop;
         } else {
-            // NOTE: I don't need this now because I'm only applying style.
             // std.debug.print("\n NO STYLE \n", .{});
-            // ctx.writeStyle(range, ctx.theme.editor) catch return error.Stop;
+            ctx.writeStyle(scope_segment, range, ctx.theme.editor) catch return error.Stop;
         }
 
         return;
     }
 
-    fn getStyle(theme: *const Theme, scope: []const u8, id: u32) ?Theme.Token {
-        _ = id;
-        return findScopeStyle(theme, scope) orelse null;
-    }
+    // fn getStyle(theme: *const Theme, scope: []const u8, id: u32) ?Theme.Token {
+    //     _ = id;
+    //     return findScopeStyle(theme, scope) orelse null;
+    // }
 
-    fn findScopeStyle(theme: *const Theme, scope: []const u8) ?Theme.Token {
-        // return if (findScopeFallback(scope)) |tm_scope|
-        //     findScopeStyleNoFallback(theme, tm_scope) orelse findScopeStyleNoFallback(theme, scope)
-        // else
-        return findScopeStyleNoFallback(theme, scope);
-    }
+    // fn findScopeStyle(theme: *const Theme, scope: []const u8) ?Theme.Token {
+    //     // return if (findScopeFallback(scope)) |tm_scope|
+    //     //     findScopeStyleNoFallback(theme, tm_scope) orelse findScopeStyleNoFallback(theme, scope)
+    //     // else
+    //     return findScopeStyleNoFallback(theme, scope);
+    // }
 
-    fn findScopeStyleNoFallback(theme: *const Theme, scope: []const u8) ?Theme.Token {
-        var idx = theme.tokens.len - 1;
-        var done = false;
-        while (!done) : (if (idx == 0) {
-            done = true;
-        } else {
-            idx -= 1;
-        }) {
-            const token = theme.tokens[idx];
-            const name = themes.scopes[token.id];
-            if (token.id == 189) {
-                // std.debug.print("\nscopes {any}", .{themes.scopes});
-                //     std.debug.print("\nTOKEN {any}", .{theme.tokens});
-            }
-            if (name.len > scope.len)
-                continue;
-            if (std.mem.eql(u8, name, scope[0..name.len])) {
-                // std.debug.print("\n token name {s} {s}\n", .{ name, scope });
-                return token;
-            }
-        }
-        return null;
-    }
+    // fn findScopeStyleNoFallback(theme: *const Theme, scope: []const u8) ?Theme.Token {
+    //     var idx = theme.tokens.len - 1;
+    //     var done = false;
+    //     while (!done) : (if (idx == 0) {
+    //         done = true;
+    //     } else {
+    //         idx -= 1;
+    //     }) {
+    //         const token = theme.tokens[idx];
+    //         const name = themes.scopes[token.id];
+    //         if (token.id == 189) {
+    //             // std.debug.print("\nscopes {any}", .{themes.scopes});
+    //             //     std.debug.print("\nTOKEN {any}", .{theme.tokens});
+    //         }
+    //         if (name.len > scope.len)
+    //             continue;
+    //         if (std.mem.eql(u8, name, scope[0..name.len])) {
+    //             // std.debug.print("\n token name {s} {s}\n", .{ name, scope });
+    //             return token;
+    //         }
+    //     }
+    //     return null;
+    // }
 
     // fn findScopeFallback(scope: []const u8) ?[]const u8 {
     //     for (fallbacks) |fallback| {
@@ -376,18 +388,15 @@ pub const Buffer = struct {
             _ = range;
             try lang.render(&ctx, Ctx.cb, null);
 
+            // NOTE: temporarily disabled just to see what happens when trying to write directly with the tokens
             // std.debug.print("POS {any}, COL {any}\n\n", .{ pos, ctx.fg });
 
-            win.writeCell(pos.x, pos.y, .{
-                .char = .{
-                    .grapheme = cluster,
-                    .width = width,
-                },
-                // .style = .{
-                //     .fg = Color.rgbFromUint(style.fg orelse 0),
-                //     .bg = Color.rgbFromUint(style.bg orelse 0),
-                // },
-            });
+            // win.writeCell(pos.x, pos.y, .{
+            //     .char = .{
+            //         .grapheme = cluster,
+            //         .width = width,
+            //     },
+            // });
 
             index += 1;
             // I don't thiColor'm using this
