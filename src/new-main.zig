@@ -36,6 +36,8 @@ const Ctx = struct {
     theme: *const Theme,
     content: []const u8,
     syntax: *syntax,
+    last_pos: usize = 0,
+    col: usize = 0,
     row: usize = 0,
 
     fn getToken(ctx: *@This(), scope: []const u8) ?Theme.Token {
@@ -59,11 +61,11 @@ const Ctx = struct {
     fn writeStyled(ctx: *@This(), text: []const u8, style: Theme.Style) !void {
         const style_ = .{
             .fg = Color.rgbFromUint(style.fg orelse 3),
-            .bg = Color.rgbFromUint(style.bg orelse 3),
+            // .bg = Color.rgbFromUint(style.bg orelse 3),
         };
 
         ctx.win.writeCell(
-            0,
+            ctx.col,
             ctx.row,
             .{
                 .style = style_,
@@ -71,7 +73,7 @@ const Ctx = struct {
             },
         );
 
-        ctx.row += 1;
+        ctx.col += text.len;
     }
 
     fn writeLinesStyled(ctx: *@This(), text_: []const u8, style: Theme.Style) !void {
@@ -79,13 +81,26 @@ const Ctx = struct {
 
         while (std.mem.indexOf(u8, text, "\n")) |pos| {
             try ctx.writeStyled(text[0 .. pos + 1], style);
+            ctx.row += 1;
+            ctx.col = 0;
             text = text[pos + 1 ..];
         }
         try ctx.writeStyled(text, style);
     }
 
-    fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, _: u32, _: usize, _: *const syntax.Node) error{Stop}!void {
-        // std.debug.print("==\nscope {s}\n==", .{scope});
+    /// TODO Starting to get there, the style is not quite right yet AND sometimes it's eating the end of the text.
+    /// Could this be caused by overlapping styles?
+    fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, _: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
+        if (idx > 0) return;
+
+        if (ctx.last_pos < range.start_byte) {
+            const before_segment = ctx.content[ctx.last_pos..range.start_byte];
+            ctx.writeLinesStyled(before_segment, ctx.theme.editor) catch return error.Stop;
+            ctx.last_pos = range.start_byte;
+        }
+
+        if (range.start_byte < ctx.last_pos) return;
+
         const scope_segment = ctx.content[range.start_byte..range.end_byte];
 
         if (ctx.getToken(scope)) |token| {
@@ -93,6 +108,8 @@ const Ctx = struct {
         } else {
             ctx.writeLinesStyled(scope_segment, ctx.theme.editor) catch return error.Stop;
         }
+
+        ctx.last_pos = range.end_byte;
     }
 };
 
@@ -105,7 +122,8 @@ const App = struct {
 
     pub fn init(allocator: std.mem.Allocator) !App {
         const vx = try vaxis.init(allocator, .{});
-        const content: []const u8 = "const foo = (bar: int) => {\n  let baz = 2;\n  return bar + baz;\n";
+        // const content: []const u8 = "const foo = (bar: int) => {\n  let baz = 2;\n  return bar + baz;\n}";
+        const content: []const u8 = "pub const Foo = union(enum) {\n  foo: usize,\n};\n";
         return .{
             .allocator = allocator,
             .should_quit = false,
@@ -164,7 +182,7 @@ const App = struct {
     }
 
     fn getParser(self: *App) !*syntax {
-        return syntax.create_file_type(self.allocator, self.content, "typescript");
+        return syntax.create_file_type(self.allocator, self.content, "zig");
     }
 
     pub fn draw(self: *App) !void {
@@ -182,7 +200,7 @@ const App = struct {
 
         const theme = blk: {
             for (themes.themes) |theme| {
-                if (std.mem.eql(u8, theme.name, "ayu-dark")) {
+                if (std.mem.eql(u8, theme.name, "default")) {
                     break :blk theme;
                 }
             }
