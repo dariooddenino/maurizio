@@ -9,6 +9,41 @@ const syntax = @import("syntax");
 const Theme = @import("theme");
 const themes = @import("themes");
 
+// Fallback mapping system between tree-sitter scope names and vscode theme scope names
+pub const FallBack = struct { ts: []const u8, tm: []const u8 };
+pub const fallbacks: []const FallBack = &[_]FallBack{
+    .{ .ts = "namespace", .tm = "entity.name.namespace" },
+    .{ .ts = "type", .tm = "entity.name.type" },
+    .{ .ts = "type.defaultLibrary", .tm = "support.type" },
+    .{ .ts = "struct", .tm = "storage.type.struct" },
+    .{ .ts = "class", .tm = "entity.name.type.class" },
+    .{ .ts = "class.defaultLibrary", .tm = "support.class" },
+    .{ .ts = "interface", .tm = "entity.name.type.interface" },
+    .{ .ts = "enum", .tm = "entity.name.type.enum" },
+    .{ .ts = "function", .tm = "entity.name.function" },
+    .{ .ts = "function.defaultLibrary", .tm = "support.function" },
+    .{ .ts = "method", .tm = "entity.name.function.member" },
+    .{ .ts = "macro", .tm = "entity.name.function.macro" },
+    .{ .ts = "variable", .tm = "variable.other.readwrite , entity.name.variable" },
+    .{ .ts = "variable.readonly", .tm = "variable.other.constant" },
+    .{ .ts = "variable.readonly.defaultLibrary", .tm = "support.constant" },
+    .{ .ts = "parameter", .tm = "variable.parameter" },
+    .{ .ts = "property", .tm = "variable.other.property" },
+    .{ .ts = "property.readonly", .tm = "variable.other.constant.property" },
+    .{ .ts = "enumMember", .tm = "variable.other.enummember" },
+    .{ .ts = "event", .tm = "variable.other.event" },
+
+    // zig
+    .{ .ts = "attribute", .tm = "keyword" },
+    .{ .ts = "number", .tm = "constant.numeric" },
+    .{ .ts = "conditional", .tm = "keyword.control.conditional" },
+    .{ .ts = "operator", .tm = "keyword.operator" },
+    .{ .ts = "boolean", .tm = "keyword.constant.bool" },
+    .{ .ts = "string", .tm = "string.quoted" },
+    .{ .ts = "repeat", .tm = "keyword.control.flow" },
+    .{ .ts = "field", .tm = "variable" },
+};
+
 pub const panic = vaxis.panic_handler;
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
@@ -40,15 +75,25 @@ const Ctx = struct {
     col: usize = 0,
     row: usize = 0,
 
-    fn getToken(ctx: *@This(), scope: []const u8) ?Theme.Token {
-        var idx = ctx.theme.tokens.len - 1;
+    fn findScopeFallback(scope: []const u8) ?[]const u8 {
+        for (fallbacks) |fallback| {
+            if (fallback.ts.len > scope.len)
+                continue;
+            if (std.mem.eql(u8, fallback.ts, scope[0..fallback.ts.len]))
+                return fallback.tm;
+        }
+        return null;
+    }
+
+    fn findScopeStyleNoFallback(theme: *const Theme, scope: []const u8) ?Theme.Token {
+        var idx = theme.tokens.len - 1;
         var done = false;
         while (!done) : (if (idx == 0) {
             done = true;
         } else {
             idx -= 1;
         }) {
-            const token = ctx.theme.tokens[idx];
+            const token = theme.tokens[idx];
             const name = themes.scopes[token.id];
             if (name.len > scope.len)
                 continue;
@@ -57,6 +102,31 @@ const Ctx = struct {
         }
         return null;
     }
+
+    fn getToken(ctx: *@This(), scope: []const u8) ?Theme.Token {
+        return if (findScopeFallback(scope)) |tm_scope|
+            findScopeStyleNoFallback(ctx.theme, tm_scope) orelse findScopeStyleNoFallback(ctx.theme, scope)
+        else
+            findScopeStyleNoFallback(ctx.theme, scope);
+    }
+
+    // fn getToken(ctx: *@This(), scope: []const u8) ?Theme.Token {
+    //     var idx = ctx.theme.tokens.len - 1;
+    //     var done = false;
+    //     while (!done) : (if (idx == 0) {
+    //         done = true;
+    //     } else {
+    //         idx -= 1;
+    //     }) {
+    //         const token = ctx.theme.tokens[idx];
+    //         const name = themes.scopes[token.id];
+    //         if (name.len > scope.len)
+    //             continue;
+    //         if (std.mem.eql(u8, name, scope[0..name.len]))
+    //             return token;
+    //     }
+    //     return null;
+    // }
 
     fn writeStyled(ctx: *@This(), text: []const u8, style: Theme.Style) !void {
         const style_ = .{
