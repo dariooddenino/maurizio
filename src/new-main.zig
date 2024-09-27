@@ -75,6 +75,7 @@ const Ctx = struct {
     col: usize = 0,
     row: usize = 0,
 
+    /// Find a scope in the fallback list
     fn findScopeFallback(scope: []const u8) ?[]const u8 {
         for (fallbacks) |fallback| {
             if (fallback.ts.len > scope.len)
@@ -113,7 +114,6 @@ const Ctx = struct {
     fn writeStyled(ctx: *@This(), text: []const u8, style: Theme.Style) !void {
         const style_ = .{
             .fg = Color.rgbFromUint(style.fg orelse 3),
-            // .bg = Color.rgbFromUint(style.bg orelse 3),
         };
 
         ctx.win.writeCell(
@@ -140,8 +140,6 @@ const Ctx = struct {
         try ctx.writeStyled(text, style);
     }
 
-    /// TODO Starting to get there, the style is not quite right yet AND sometimes it's eating the end of the text.
-    /// Could this be caused by overlapping styles?
     fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, _: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
         if (idx > 0) return;
 
@@ -173,8 +171,11 @@ const App = struct {
     content: []const u8,
 
     pub fn init(allocator: std.mem.Allocator, content: []const u8) !App {
-        const vx = try vaxis.init(allocator, .{});
-        // const content: []const u8 = "const foo = (bar: int) => {\n  let baz = 2;\n  return bar + baz;\n}";
+        var vx = try vaxis.init(allocator, .{});
+
+        // vx.caps.kitty_graphics = true;
+        // vx.caps.rgb = true;
+        vx.sgr = .legacy;
         return .{
             .allocator = allocator,
             .should_quit = false,
