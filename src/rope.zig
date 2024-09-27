@@ -9,6 +9,7 @@ pub const Rope = struct {
     root: *Node,
 
     /// Initialize an empty Rope
+    /// TODO this is bugged when initialized with a non empty string
     pub fn init(allocator: Allocator, text: []const u8) !Rope {
         const root = try Node.createLeaf(allocator, text);
         return Rope{

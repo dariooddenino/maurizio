@@ -16,6 +16,9 @@ const Theme = @import("theme");
 const themes = @import("themes");
 const border = vaxis.widgets.border;
 
+/// TODO move this into a renderer module
+/// and then use it in buffer in place of that broken code.
+
 // Fallback mapping system between tree-sitter scope names and vscode theme scope names
 pub const FallBack = struct { ts: []const u8, tm: []const u8 };
 pub const fallbacks: []const FallBack = &[_]FallBack{
@@ -175,13 +178,16 @@ const App = struct {
     should_quit: bool,
     tty: vaxis.Tty,
     vx: vaxis.Vaxis,
-    content: []const u8,
     buffer: *Buffer,
 
-    pub fn init(allocator: std.mem.Allocator, content: []const u8) !App {
+    pub fn init(allocator: std.mem.Allocator, content: ?[]const u8) !App {
         var vx = try vaxis.init(allocator, .{});
         const buffer = try allocator.create(Buffer);
-        buffer.* = try Buffer.initEmpty(allocator);
+        if (content) |c| {
+            buffer.* = try Buffer.init(allocator, c);
+        } else {
+            buffer.* = try Buffer.initEmpty(allocator);
+        }
 
         // vx.caps.kitty_graphics = true;
         // vx.caps.rgb = true;
@@ -191,7 +197,6 @@ const App = struct {
             .should_quit = false,
             .tty = try vaxis.Tty.init(),
             .vx = vx,
-            .content = content,
             .buffer = buffer,
         };
     }
@@ -239,6 +244,10 @@ const App = struct {
             .key_press => |key| {
                 if (key.matches('c', .{ .ctrl = true })) {
                     self.should_quit = true;
+                } else if (key.matches('l', .{ .ctrl = true })) {
+                    self.vx.queueRefresh();
+                } else {
+                    try self.buffer.handleKey(.{ .key_press = key });
                 }
             },
             .winsize => |ws| try self.vx.resize(self.allocator, self.tty.anyWriter(), ws),
@@ -247,7 +256,7 @@ const App = struct {
     }
 
     fn getParser(self: *App) !*syntax {
-        return syntax.create_file_type(self.allocator, self.content, "zig");
+        return syntax.create_file_type(self.allocator, self.buffer.rope_l.items, "zig");
     }
 
     pub fn draw(self: *App) !void {
@@ -275,11 +284,16 @@ const App = struct {
         var ctx: Ctx = .{
             .win = win,
             .theme = &theme,
-            .content = self.content,
+            .content = self.buffer.rope_l.items,
             .syntax = lang,
         };
 
         try lang.render(&ctx, Ctx.cb, null);
+
+        // TODO should be
+        //  try self.buffer.draw(self.vx, win);
+        // cursor here? probably in the buffer
+        win.showCursor(self.buffer.cursor.xy.x, self.buffer.cursor.xy.y);
     }
 };
 

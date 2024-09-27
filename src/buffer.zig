@@ -260,20 +260,19 @@ pub const Buffer = struct {
     lines: *Lines,
 
     pub fn initEmpty(allocator: std.mem.Allocator) !Buffer {
+        return Buffer.init(allocator, "");
+    }
+
+    pub fn init(allocator: std.mem.Allocator, content: []const u8) !Buffer {
         const rope = try allocator.create(Rope);
         rope.* = try Rope.init(allocator, "");
+        try rope.append(content);
         const lines = try allocator.create(Lines);
         lines.* = Lines.init(allocator);
         const cursor = try allocator.create(Cursor);
         const xy: XY = XY{ .x = 0, .y = 0 };
         cursor.* = Cursor{ .lines = lines, .xy = xy };
         const rope_l = std.ArrayList(u8).init(allocator);
-
-        // TODO temporary hack to test syntax.
-        // This doesn't even update rope_l
-        try rope.append("const foo = (bar) => {\n  let baz = 2;\n  return Math.max(bar, baz);\n}");
-        // try rope.append("let foo = 1;");
-        // try rope.append("fn write_html_preamble(writer: Writer, style: Theme.style) !void {\n}");
 
         return .{
             .allocator = allocator,
