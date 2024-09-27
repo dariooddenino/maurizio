@@ -1,13 +1,20 @@
 const std = @import("std");
 
+const rope = @import("rope.zig");
+const node = @import("node.zig");
 const clap = @import("clap");
 const vaxis = @import("vaxis");
 const Cell = vaxis.Cell;
 const Color = Cell.Color;
 const Key = vaxis.Key;
+const Buffer = @import("buffer.zig").Buffer;
+const Rope = rope.Rope;
+const TextArea = @import("textarea.zig").TextArea;
+const TextInput = vaxis.widgets.TextInput;
 const syntax = @import("syntax");
 const Theme = @import("theme");
 const themes = @import("themes");
+const border = vaxis.widgets.border;
 
 // Fallback mapping system between tree-sitter scope names and vscode theme scope names
 pub const FallBack = struct { ts: []const u8, tm: []const u8 };
@@ -169,9 +176,12 @@ const App = struct {
     tty: vaxis.Tty,
     vx: vaxis.Vaxis,
     content: []const u8,
+    buffer: *Buffer,
 
     pub fn init(allocator: std.mem.Allocator, content: []const u8) !App {
         var vx = try vaxis.init(allocator, .{});
+        const buffer = try allocator.create(Buffer);
+        buffer.* = try Buffer.initEmpty(allocator);
 
         // vx.caps.kitty_graphics = true;
         // vx.caps.rgb = true;
@@ -182,12 +192,15 @@ const App = struct {
             .tty = try vaxis.Tty.init(),
             .vx = vx,
             .content = content,
+            .buffer = buffer,
         };
     }
 
     pub fn deinit(self: *App) void {
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
+        self.buffer.deinit();
+        self.allocator.destroy(self.buffer);
     }
 
     pub fn run(self: *App) !void {
