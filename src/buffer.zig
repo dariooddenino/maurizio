@@ -9,6 +9,7 @@ const Event = @import("main.zig").Event;
 const Renderer = @import("renderer.zig").Renderer;
 const BufferGap = @import("buffergap.zig").BufferGap;
 const SimpleBuffer = @import("simplebuffer.zig").SimpleBuffer;
+const StyleCache = @import("main.zig").StyleCache;
 
 const treez = @import("treez");
 
@@ -124,16 +125,14 @@ const Cursor = struct {
 // };
 
 const Content = Rope;
+// const Content = BufferGap;
+// const Content = SimpleBuffer;
 
 const Lines = std.ArrayList(usize);
 
 pub const Buffer = struct {
     allocator: std.mem.Allocator,
-    // rope: *Rope,
-    // rope: *BufferGap,
     content: *Content,
-    // I'm using this to go around the value lifetime, but it feels so bad.
-    // NOTE this is only useful with Rope or BufferGap.
     // Keep a cache of the content to avoid memory issues.
     content_cache: []u8,
     cursor: *Cursor,
@@ -147,12 +146,6 @@ pub const Buffer = struct {
 
     // TODO I guess this should init with a theme?
     pub fn init(allocator: std.mem.Allocator, init_content: []const u8) !Buffer {
-        // const rope = try allocator.create(Rope);
-        // rope.* = try Rope.init(allocator, "");
-        // try rope.append(content);
-        // const rope = try allocator.create(BufferGap);
-        // rope.* = try BufferGap.init(allocator, "");
-        // try rope.append(content);
         const content = try allocator.create(Content);
         content.* = try Content.init(allocator, "");
         try content.append(init_content);
@@ -215,13 +208,7 @@ pub const Buffer = struct {
         self.allocator.free(self.content_cache);
     }
 
-    pub fn draw_(self: *Buffer, vx: Vaxis, win: vaxis.Window) !void {
-        _ = self;
-        _ = vx;
-        _ = win;
-    }
-
-    pub fn draw(self: *Buffer, vx: Vaxis, win: vaxis.Window) !void {
+    pub fn draw(self: *Buffer, vx: Vaxis, win: vaxis.Window, style_cache: *StyleCache) !void {
         _ = vx;
         const current_content = try self.content.getValue();
         // NOTE if I free this I get a panic, if I don't I get a leak.
@@ -293,20 +280,11 @@ pub const Buffer = struct {
             .theme = self.theme,
             .content = content,
             .syntax = self.syntax,
+            .style_cache = style_cache,
             // cursor?
         };
 
         try self.syntax.render(&renderer, Renderer.cb, null);
-
-        // NOTE: temporarily disabled just to see what happens when trying to write directly with the tokens
-        // std.debug.print("POS {any}, COL {any}\n\n", .{ pos, ctx.fg });
-
-        // win.writeCell(pos.x, pos.y, .{
-        //     .char = .{
-        //         .grapheme = cluster,
-        //         .width = width,
-        //     },
-        // });
 
         // index += 1;
         // I don't thiColor'm using this

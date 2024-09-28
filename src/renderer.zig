@@ -4,6 +4,7 @@ const Color = vaxis.Cell.Color;
 const Theme = @import("theme");
 const themes = @import("themes");
 const syntax = @import("syntax");
+const StyleCache = @import("main.zig").StyleCache;
 
 // Fallback mapping system between tree-sitter scope names and vscode theme scope names
 pub const FallBack = struct { ts: []const u8, tm: []const u8 };
@@ -45,6 +46,7 @@ pub const Renderer = struct {
     theme: *const Theme,
     content: []const u8,
     syntax: *syntax,
+    style_cache: *StyleCache,
     last_pos: usize = 0,
     col: usize = 0,
     row: usize = 0,
@@ -78,15 +80,25 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn getToken(ctx: *@This(), scope: []const u8) ?Theme.Token {
+    // TODO I should get my nomenclature straight (scope / token)
+    fn styleCacheLookup(self: *@This(), theme: *const Theme, scope: []const u8, id: u32) !?Theme.Token {
+        return if (self.style_cache.get(id)) |sty| ret: {
+            break :ret sty;
+        } else ret: {
+            const sty = findScopeStyle(theme, scope) orelse null;
+            try self.style_cache.put(id, sty);
+            break :ret sty;
+        };
+    }
+
+    fn findScopeStyle(theme: *const Theme, scope: []const u8) ?Theme.Token {
         return if (findScopeFallback(scope)) |tm_scope|
-            findScopeStyleNoFallback(ctx.theme, tm_scope) orelse findScopeStyleNoFallback(ctx.theme, scope)
+            findScopeStyleNoFallback(theme, tm_scope) orelse findScopeStyleNoFallback(theme, scope)
         else
-            findScopeStyleNoFallback(ctx.theme, scope);
+            findScopeStyleNoFallback(theme, scope);
     }
 
     fn writeStyled(ctx: *@This(), text: []const u8, style: Theme.Style) !void {
-        // _ = style;
         const style_ = .{
             .fg = Color.rgbFromUint(style.fg orelse 3),
         };
@@ -115,7 +127,7 @@ pub const Renderer = struct {
         try ctx.writeStyled(text, style);
     }
 
-    pub fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, _: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
+    pub fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
         if (idx > 0) return;
 
         if (ctx.last_pos < range.start_byte) {
@@ -127,13 +139,18 @@ pub const Renderer = struct {
         if (range.start_byte < ctx.last_pos) return;
 
         const scope_segment = ctx.content[range.start_byte..range.end_byte];
-
-        if (ctx.getToken(scope)) |token| {
+        const cached_style = ctx.styleCacheLookup(ctx.theme, scope, id) catch {
+            return error.Stop;
+        };
+        if (cached_style) |token| {
             ctx.writeLinesStyled(scope_segment, token.style) catch return error.Stop;
         } else {
             ctx.writeLinesStyled(scope_segment, ctx.theme.editor) catch return error.Stop;
         }
 
         ctx.last_pos = range.end_byte;
+
+        // TODO current line check?
+
     }
 };

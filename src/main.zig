@@ -16,6 +16,8 @@ const Theme = @import("theme");
 const themes = @import("themes");
 const border = vaxis.widgets.border;
 
+pub const StyleCache = std.AutoHashMap(u32, ?Theme.Token);
+
 pub const panic = vaxis.panic_handler;
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
@@ -44,6 +46,7 @@ const App = struct {
     tty: vaxis.Tty,
     vx: vaxis.Vaxis,
     buffer: *Buffer,
+    style_cache: *StyleCache,
 
     pub fn init(allocator: std.mem.Allocator, content: ?[]const u8) !App {
         var vx = try vaxis.init(allocator, .{});
@@ -54,6 +57,8 @@ const App = struct {
             buffer.* = try Buffer.initEmpty(allocator);
         }
 
+        const style_cache = try allocator.create(StyleCache);
+        style_cache.* = StyleCache.init(allocator);
         // vx.caps.kitty_graphics = true;
         // vx.caps.rgb = true;
         vx.sgr = .legacy;
@@ -63,6 +68,7 @@ const App = struct {
             .tty = try vaxis.Tty.init(),
             .vx = vx,
             .buffer = buffer,
+            .style_cache = style_cache,
         };
     }
 
@@ -71,6 +77,8 @@ const App = struct {
         self.tty.deinit();
         self.buffer.deinit();
         self.allocator.destroy(self.buffer);
+        self.style_cache.deinit();  
+        self.allocator.destroy(self.style_cache);
     }
 
     pub fn run(self: *App) !void {
@@ -130,7 +138,7 @@ const App = struct {
 
         const child = win.initChild(0, 0, .expand, .expand);
 
-        try self.buffer.draw(self.vx, child);
+        try self.buffer.draw(self.vx, child, self.style_cache);
     }
 };
 
