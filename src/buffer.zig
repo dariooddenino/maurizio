@@ -6,6 +6,7 @@ const Rope = @import("rope.zig").Rope;
 const Key = vaxis.Key;
 const Vaxis = vaxis.Vaxis;
 const Event = @import("main.zig").Event;
+const Renderer = @import("renderer.zig").Renderer;
 
 const treez = @import("treez");
 
@@ -19,135 +20,6 @@ const themes = @import("themes");
 const XY = struct {
     x: usize = 0,
     y: usize = 0,
-};
-
-// TODO insipred by zat, I will have to rewrite all of this.
-const Ctx = struct {
-    win: vaxis.Window,
-    cursor: *Cursor,
-    theme: *const Theme,
-    content: []const u8,
-    syntax: *syntax,
-
-    fn getToken(theme: *const Theme, scope: []const u8) ?Theme.Token {
-        // std.debug.print("\nGETTING TOKEN {s}\n", .{scope});
-        var idx = theme.tokens.len - 1;
-        var done = false;
-        while (!done) : (if (idx == 0) {
-            done = true;
-        } else {
-            idx -= 1;
-        }) {
-            const token = theme.tokens[idx];
-            const name = themes.scopes[token.id];
-            if (name.len > scope.len)
-                continue;
-            if (std.mem.eql(u8, name, scope[0..name.len]))
-                return token;
-        }
-        return null;
-    }
-
-    fn writeStyle(ctx: *@This(), text: []const u8, range: syntax.Range, style: Theme.Style) !void {
-        // It looks like the token, and range are ok
-        _ = style;
-        const style_ = .{
-            .fg = .{ .index = 8 },
-            // .fg = Color.rgbFromUint(style.fg orelse 3),
-            // .bg = Color.rgbFromUint(style.bg orelse 3),
-        };
-
-        // std.debug.print("\n applying style {} to {} {}\n", .{ style_, range.start_byte, range.end_byte });
-
-        // const cell = ctx.win.readCell(0, 0);
-
-        // if (cell) |c| {
-        //     ctx.win.writeCell(0, 0, .{ .style = style_, .char = c.char });
-        // }
-
-        // TODO maybe I can do this not char by char...
-        // for (range.start_byte..range.end_byte) |pos| {
-        // const xy = ctx.cursor.customPosToXY(pos);
-
-        const xy = ctx.cursor.customPosToXY(range.start_byte);
-        // std.debug.print("\norig fg {?} vax fg {} pos {} XY {}\n", .{ style.fg, style_.fg, pos, xy });
-
-        // const cell = ctx.win.readCell(xy.x, xy.y);
-
-        // const relative_pos = pos - range.start_byte;
-        // if (cell) |c| {
-        ctx.win.writeCell(
-            xy.x,
-            xy.y,
-            .{
-                .style = style_,
-                .char = .{ .grapheme = text },
-            },
-        );
-        // }
-        // }
-    }
-
-    fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
-        _ = idx;
-        _ = id;
-        const scope_segment = ctx.content[range.start_byte..range.end_byte];
-        // _ = scope;
-        if (getToken(ctx.theme, scope)) |token| {
-            ctx.writeStyle(scope_segment, range, token.style) catch return error.Stop;
-        } else {
-            // std.debug.print("\n NO STYLE \n", .{});
-            ctx.writeStyle(scope_segment, range, ctx.theme.editor) catch return error.Stop;
-        }
-
-        return;
-    }
-
-    // fn getStyle(theme: *const Theme, scope: []const u8, id: u32) ?Theme.Token {
-    //     _ = id;
-    //     return findScopeStyle(theme, scope) orelse null;
-    // }
-
-    // fn findScopeStyle(theme: *const Theme, scope: []const u8) ?Theme.Token {
-    //     // return if (findScopeFallback(scope)) |tm_scope|
-    //     //     findScopeStyleNoFallback(theme, tm_scope) orelse findScopeStyleNoFallback(theme, scope)
-    //     // else
-    //     return findScopeStyleNoFallback(theme, scope);
-    // }
-
-    // fn findScopeStyleNoFallback(theme: *const Theme, scope: []const u8) ?Theme.Token {
-    //     var idx = theme.tokens.len - 1;
-    //     var done = false;
-    //     while (!done) : (if (idx == 0) {
-    //         done = true;
-    //     } else {
-    //         idx -= 1;
-    //     }) {
-    //         const token = theme.tokens[idx];
-    //         const name = themes.scopes[token.id];
-    //         if (token.id == 189) {
-    //             // std.debug.print("\nscopes {any}", .{themes.scopes});
-    //             //     std.debug.print("\nTOKEN {any}", .{theme.tokens});
-    //         }
-    //         if (name.len > scope.len)
-    //             continue;
-    //         if (std.mem.eql(u8, name, scope[0..name.len])) {
-    //             // std.debug.print("\n token name {s} {s}\n", .{ name, scope });
-    //             return token;
-    //         }
-    //     }
-    //     return null;
-    // }
-
-    // fn findScopeFallback(scope: []const u8) ?[]const u8 {
-    //     for (fallbacks) |fallback| {
-    //         if (fallback.ts.len > scope.len)
-    //             continue;
-    //         if (std.mem.eql(u8, fallback.ts, scope[0..fallback.ts.len]))
-    //             return fallback.tm;
-    //     }
-    //     return null;
-    // }
 };
 
 // NOTE the whole way I'm handling movement is completely inefficient.
@@ -258,11 +130,14 @@ pub const Buffer = struct {
     rope_l: std.ArrayList(u8),
     cursor: *Cursor,
     lines: *Lines,
+    syntax: *syntax,
+    theme: *Theme,
 
     pub fn initEmpty(allocator: std.mem.Allocator) !Buffer {
         return Buffer.init(allocator, "");
     }
 
+    // TODO I guess this should init with a theme?
     pub fn init(allocator: std.mem.Allocator, content: []const u8) !Buffer {
         const rope = try allocator.create(Rope);
         rope.* = try Rope.init(allocator, "");
@@ -273,14 +148,41 @@ pub const Buffer = struct {
         const xy: XY = XY{ .x = 0, .y = 0 };
         cursor.* = Cursor{ .lines = lines, .xy = xy };
         const rope_l = std.ArrayList(u8).init(allocator);
+        const theme = try allocator.create(Theme);
 
-        return .{
+        var buffer: Buffer = .{
             .allocator = allocator,
             .rope = rope,
             .cursor = cursor,
             .rope_l = rope_l,
             .lines = lines,
+            .syntax = undefined,
+            .theme = theme,
         };
+
+        try buffer.setTheme(null);
+
+        try Buffer.setSyntax(&buffer);
+
+        return buffer;
+    }
+
+    fn setTheme(self: *Buffer, m_theme: ?[]const u8) !void {
+        const theme = m_theme orelse "default";
+
+        for (themes.themes) |th| {
+            if (std.mem.eql(u8, th.name, theme)) {
+                self.theme.* = th;
+                return;
+            }
+        }
+        unreachable;
+    }
+
+    // TODO should have a cache
+    fn setSyntax(self: *Buffer) !void {
+        const syntax_ = try syntax.create_file_type(self.allocator, try self.rope.getValue(), "zig");
+        self.syntax = syntax_;
     }
 
     pub fn deinit(self: *Buffer) void {
@@ -290,9 +192,19 @@ pub const Buffer = struct {
         self.rope.deinit();
         self.rope_l.deinit();
         self.allocator.destroy(self.rope);
+        self.syntax.destroy();
+        self.allocator.destroy(self.syntax);
+        self.allocator.destroy(self.theme);
+    }
+
+    pub fn draw_(self: *Buffer, vx: Vaxis, win: vaxis.Window) !void {
+        _ = self;
+        _ = vx;
+        _ = win;
     }
 
     pub fn draw(self: *Buffer, vx: Vaxis, win: vaxis.Window) !void {
+        _ = vx;
         const rope_content = try self.rope.getValue();
         defer self.allocator.free(rope_content);
         // This can't be performant at all
@@ -301,106 +213,83 @@ pub const Buffer = struct {
 
         const content = self.rope_l.items;
 
-        var msg_iter = vx.unicode.graphemeIterator(content);
-
-        // I guess the idea here is:
-        // - store the lines layout
-        // - get the current position of the cursor
-        // -
+        // var msg_iter = vx.unicode.graphemeIterator(content);
 
         // Reinitialize the lines
         self.lines.clearAndFree();
 
-        // TODO ok so this builds the parser, which I have then to use somehow.
-        // https://github.com/neurocyte/zat/blob/master/src/main.zig
-        // it passes it together with theme to `render_file_type`.
-        const lang = try self.rope.get_parser();
-        // std.debug.print("parser\n\n {s} {s} {s}", .{ parser.file_type.name, parser.file_type.highlights, parser.file_type.icon });
-        defer lang.destroy();
+        // const Pos = struct { x: usize = 0, y: usize = 0 };
+        // var pos: Pos = .{};
+        // var byte_index: usize = 0;
 
-        const theme = blk: {
-            for (themes.themes) |theme| {
-                if (std.mem.eql(u8, theme.name, "ayu-dark")) {
-                    break :blk theme;
-                }
-            }
-            unreachable;
+        // var index: usize = 0;
+        // while (msg_iter.next()) |grapheme| {
+        //     const cluster = content[grapheme.offset..][0..grapheme.len];
+        //     defer byte_index += cluster.len;
+
+        //     const new_line = "\n";
+
+        //     // Why isn't the new line char working? :/
+        //     if (std.mem.eql(u8, cluster, new_line)) {
+        //         if (index == content.len - 1) {
+        //             break;
+        //         }
+        //         try self.lines.append(index);
+        //         pos.y += 1;
+        //         pos.x = 0;
+        //         continue;
+        //     }
+
+        //     self.cursor.updateXY();
+
+        //     const width = win.gwidth(cluster);
+        //     defer pos.x +|= width;
+
+        // TODO this styling is all very random for now
+        // const style = theme.editor_selection;
+
+        // const start_row: u32 = @intCast(pos.y);
+        // const start_column: u32 = @intCast(pos.x);
+
+        // Naive range for now
+        // const range: ?syntax.Range = .{
+        //     .start_point = .{ .row = start_row, .column = start_column },
+        //     .end_point = .{ .row = start_row, .column = start_column + 10 },
+        //     // .start_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) },
+        //     // .end_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) + 1 },
+        //     .start_byte = 0,
+        //     .end_byte = 0,
+        // };
+
+        // std.debug.print("RANGE: {any}\n", .{range});
+
+        var renderer: Renderer = .{
+            .win = win,
+            .theme = self.theme,
+            .content = content,
+            .syntax = self.syntax,
+            // cursor?
         };
-        // std.debug.print("theme {any}\n", .{theme});
-        // _ = theme;
 
-        // std.debug.print("\n{any}\n", .{theme});
+        // _ = renderer;
+        try self.syntax.render(&renderer, Renderer.cb, null);
 
-        const Pos = struct { x: usize = 0, y: usize = 0 };
-        var pos: Pos = .{};
-        var byte_index: usize = 0;
+        // NOTE: temporarily disabled just to see what happens when trying to write directly with the tokens
+        // std.debug.print("POS {any}, COL {any}\n\n", .{ pos, ctx.fg });
 
-        var index: usize = 0;
-        while (msg_iter.next()) |grapheme| {
-            const cluster = content[grapheme.offset..][0..grapheme.len];
-            defer byte_index += cluster.len;
+        // win.writeCell(pos.x, pos.y, .{
+        //     .char = .{
+        //         .grapheme = cluster,
+        //         .width = width,
+        //     },
+        // });
 
-            const new_line = "\n";
+        // index += 1;
+        // I don't thiColor'm using this
+        // if (index == self.cursor.grapheme_idx) self.cursor.x = pos.x;
 
-            // Why isn't the new line char working? :/
-            if (std.mem.eql(u8, cluster, new_line)) {
-                if (index == content.len - 1) {
-                    break;
-                }
-                try self.lines.append(index);
-                pos.y += 1;
-                pos.x = 0;
-                continue;
-            }
-
-            self.cursor.updateXY();
-
-            const width = win.gwidth(cluster);
-            defer pos.x +|= width;
-
-            // TODO this styling is all very random for now
-            // const style = theme.editor_selection;
-
-            const start_row: u32 = @intCast(pos.y);
-            const start_column: u32 = @intCast(pos.x);
-
-            // Naive range for now
-            const range: ?syntax.Range = .{
-                .start_point = .{ .row = start_row, .column = start_column },
-                .end_point = .{ .row = start_row, .column = start_column + 10 },
-                // .start_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) },
-                // .end_point = .{ .row = @as(u32, pos.x), .column = @as(u32, pos.y) + 1 },
-                .start_byte = 0,
-                .end_byte = 0,
-            };
-
-            // std.debug.print("RANGE: {any}\n", .{range});
-
-            var ctx: Ctx = .{
-                .win = win,
-                .theme = &theme,
-                .content = content,
-                .syntax = lang,
-                .cursor = self.cursor,
-            };
-
-            _ = range;
-            try lang.render(&ctx, Ctx.cb, null);
-
-            // NOTE: temporarily disabled just to see what happens when trying to write directly with the tokens
-            // std.debug.print("POS {any}, COL {any}\n\n", .{ pos, ctx.fg });
-
-            // win.writeCell(pos.x, pos.y, .{
-            //     .char = .{
-            //         .grapheme = cluster,
-            //         .width = width,
-            //     },
-            // });
-
-            index += 1;
-            // I don't thiColor'm using this
-            // if (index == self.cursor.grapheme_idx) self.cursor.x = pos.x;
-        }
+        win.showCursor(self.cursor.xy.x, self.cursor.xy.y);
+        // }
     }
 
     pub fn handleKey(self: *Buffer, event: Event) !void {
