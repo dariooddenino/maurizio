@@ -40,8 +40,8 @@
             .hash = "12208efbfead8c57adeabbd2293d6ed19e00f769e1d8aba0d544270479587c9f694a",
         },
         .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis?ref=main#d36ab043caf7cbb24cae1bd0346dd6b654df0653",
-            .hash = "12206c252ee00b9dd0214989dfa35a6eea29ac7d65d4053817f161f4c23b6e09dd89",
+            .url = "git+https://github.com/rockorager/libvaxis?ref=main#1961712c1f0cf46b235dd31418dc1b52442abbd5",
+            .hash = "12208cfdda4d5fdbc81b0c44b82e4d6dba2d4a86bff644a153e026fdfc80f8469133",
         },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{

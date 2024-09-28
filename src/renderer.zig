@@ -80,13 +80,13 @@ pub const Renderer = struct {
         return null;
     }
 
-    // TODO I should get my nomenclature straight (scope / token)
-    fn styleCacheLookup(self: *@This(), theme: *const Theme, scope: []const u8, id: u32) !?Theme.Token {
-        return if (self.style_cache.get(id)) |sty| ret: {
+    // TODO this is awkward, maybe the style cache should be its own struct
+    pub fn styleCacheLookup(style_cache: *StyleCache, theme: *const Theme, scope: []const u8, id: u32) !?Theme.Token {
+        return if (style_cache.get(id)) |sty| ret: {
             break :ret sty;
         } else ret: {
             const sty = findScopeStyle(theme, scope) orelse null;
-            try self.style_cache.put(id, sty);
+            try style_cache.put(id, sty);
             break :ret sty;
         };
     }
@@ -127,6 +127,8 @@ pub const Renderer = struct {
         try ctx.writeStyled(text, style);
     }
 
+    // TODO this doesn't set the background color back...
+
     pub fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
         if (idx > 0) return;
 
@@ -139,9 +141,10 @@ pub const Renderer = struct {
         if (range.start_byte < ctx.last_pos) return;
 
         const scope_segment = ctx.content[range.start_byte..range.end_byte];
-        const cached_style = ctx.styleCacheLookup(ctx.theme, scope, id) catch {
+        const cached_style = styleCacheLookup(ctx.style_cache, ctx.theme, scope, id) catch {
             return error.Stop;
         };
+
         if (cached_style) |token| {
             ctx.writeLinesStyled(scope_segment, token.style) catch return error.Stop;
         } else {

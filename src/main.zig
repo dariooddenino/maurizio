@@ -44,28 +44,32 @@ const App = struct {
     allocator: std.mem.Allocator,
     should_quit: bool,
     tty: vaxis.Tty,
-    vx: vaxis.Vaxis,
+    vx: *vaxis.Vaxis,
     buffer: *Buffer,
     style_cache: *StyleCache,
 
     pub fn init(allocator: std.mem.Allocator, content: ?[]const u8) !App {
-        var vx = try vaxis.init(allocator, .{});
-        const buffer = try allocator.create(Buffer);
-        if (content) |c| {
-            buffer.* = try Buffer.init(allocator, c);
-        } else {
-            buffer.* = try Buffer.initEmpty(allocator);
-        }
+        const vx = try allocator.create(vaxis.Vaxis);
+        vx.* = try vaxis.init(allocator, .{});
+        const tty = try vaxis.Tty.init();        
 
         const style_cache = try allocator.create(StyleCache);
         style_cache.* = StyleCache.init(allocator);
+
+        const buffer = try allocator.create(Buffer);
+        if (content) |c| {
+            buffer.* = try Buffer.init(allocator, vx, tty, style_cache, c);
+        } else {
+            buffer.* = try Buffer.initEmpty(allocator, vx, tty, style_cache);
+        }
+
         // vx.caps.kitty_graphics = true;
         // vx.caps.rgb = true;
         vx.sgr = .legacy;
         return .{
             .allocator = allocator,
             .should_quit = false,
-            .tty = try vaxis.Tty.init(),
+            .tty = tty,
             .vx = vx,
             .buffer = buffer,
             .style_cache = style_cache,
@@ -79,12 +83,13 @@ const App = struct {
         self.allocator.destroy(self.buffer);
         self.style_cache.deinit();  
         self.allocator.destroy(self.style_cache);
+        self.allocator.destroy(self.vx);
     }
 
     pub fn run(self: *App) !void {
         var loop: vaxis.Loop(Event) = .{
             .tty = &self.tty,
-            .vaxis = &self.vx,
+            .vaxis = self.vx,
         };
 
         try loop.init();
@@ -138,7 +143,7 @@ const App = struct {
 
         const child = win.initChild(0, 0, .expand, .expand);
 
-        try self.buffer.draw(self.vx, child, self.style_cache);
+        try self.buffer.draw(child);
     }
 };
 

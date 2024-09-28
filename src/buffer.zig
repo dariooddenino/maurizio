@@ -5,6 +5,7 @@ const Color = Cell.Color;
 const Rope = @import("rope.zig").Rope;
 const Key = vaxis.Key;
 const Vaxis = vaxis.Vaxis;
+const Tty = vaxis.Tty;
 const Event = @import("main.zig").Event;
 const Renderer = @import("renderer.zig").Renderer;
 const BufferGap = @import("buffergap.zig").BufferGap;
@@ -133,19 +134,22 @@ const Lines = std.ArrayList(usize);
 pub const Buffer = struct {
     allocator: std.mem.Allocator,
     content: *Content,
+    style_cache: *StyleCache,
     // Keep a cache of the content to avoid memory issues.
     content_cache: []u8,
     cursor: *Cursor,
     lines: *Lines,
     syntax: *syntax,
     theme: *Theme,
+    vx: *Vaxis,
+    tty: Tty,
 
-    pub fn initEmpty(allocator: std.mem.Allocator) !Buffer {
-        return Buffer.init(allocator, "");
+    pub fn initEmpty(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache) !Buffer {
+        return Buffer.init(allocator, vx, tty, style_cache, "");
     }
 
     // TODO I guess this should init with a theme?
-    pub fn init(allocator: std.mem.Allocator, init_content: []const u8) !Buffer {
+    pub fn init(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache, init_content: []const u8) !Buffer {
         const content = try allocator.create(Content);
         content.* = try Content.init(allocator, "");
         try content.append(init_content);
@@ -162,15 +166,19 @@ pub const Buffer = struct {
 
         var buffer: Buffer = .{
             .allocator = allocator,
+            .style_cache = style_cache,
             .content = content,
             .cursor = cursor,
             .content_cache = content_cache,
             .lines = lines,
             .syntax = undefined,
             .theme = theme,
+            .vx = vx,
+            .tty = tty,
         };
 
-        try buffer.setTheme(null);
+        try buffer.setTheme("rose-pine-dawn");
+        try vx.setTerminalBackgroundColor(tty.anyWriter(), Color.rgbFromUint(theme.editor.bg orelse 0).rgb);
 
         try Buffer.setSyntax(&buffer);
 
@@ -208,8 +216,7 @@ pub const Buffer = struct {
         self.allocator.free(self.content_cache);
     }
 
-    pub fn draw(self: *Buffer, vx: Vaxis, win: vaxis.Window, style_cache: *StyleCache) !void {
-        _ = vx;
+    pub fn draw(self: *Buffer, win: vaxis.Window) !void {
         const current_content = try self.content.getValue();
         // NOTE if I free this I get a panic, if I don't I get a leak.
         defer self.allocator.free(current_content);
@@ -280,7 +287,7 @@ pub const Buffer = struct {
             .theme = self.theme,
             .content = content,
             .syntax = self.syntax,
-            .style_cache = style_cache,
+            .style_cache = self.style_cache,
             // cursor?
         };
 

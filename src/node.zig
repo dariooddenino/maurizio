@@ -13,6 +13,7 @@ const REBALANCE_RATIO: f32 = 1.2;
 const LeafText = BoundedArray(u8, MAX_LEAF_SIZE);
 
 // TODO
+// - I think I shouldn't be using recursion here, tail recursion or stack approach.
 // - BUG see failing test and follow notes.
 // - BUG when closing the editor there's a memory leak
 // - INSERT: I think size is fine, depth not updated

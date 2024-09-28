@@ -38,10 +38,6 @@ pub const Rope = struct {
         return try self.getValueRange(0, self.root.full_size);
     }
 
-    pub fn get_parser(self: *Rope) !*syntax {
-        return syntax.create_file_type(self.allocator, try self.getValue(), "typescript");
-    }
-
     /// Append at the end of the Rope
     pub fn append(self: *Rope, text: []const u8) !void {
         try self.root.append(self.allocator, text);
