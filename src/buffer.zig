@@ -7,6 +7,8 @@ const Key = vaxis.Key;
 const Vaxis = vaxis.Vaxis;
 const Event = @import("main.zig").Event;
 const Renderer = @import("renderer.zig").Renderer;
+const BufferGap = @import("buffergap.zig").BufferGap;
+const SimpleBuffer = @import("simplebuffer.zig").SimpleBuffer;
 
 const treez = @import("treez");
 
@@ -121,13 +123,19 @@ const Cursor = struct {
 //     // }
 // };
 
+const Content = Rope;
+
 const Lines = std.ArrayList(usize);
 
 pub const Buffer = struct {
     allocator: std.mem.Allocator,
-    rope: *Rope,
+    // rope: *Rope,
+    // rope: *BufferGap,
+    content: *Content,
     // I'm using this to go around the value lifetime, but it feels so bad.
-    rope_l: std.ArrayList(u8),
+    // NOTE this is only useful with Rope or BufferGap.
+    // Keep a cache of the content to avoid memory issues.
+    content_cache: []u8,
     cursor: *Cursor,
     lines: *Lines,
     syntax: *syntax,
@@ -138,23 +146,32 @@ pub const Buffer = struct {
     }
 
     // TODO I guess this should init with a theme?
-    pub fn init(allocator: std.mem.Allocator, content: []const u8) !Buffer {
-        const rope = try allocator.create(Rope);
-        rope.* = try Rope.init(allocator, "");
-        try rope.append(content);
+    pub fn init(allocator: std.mem.Allocator, init_content: []const u8) !Buffer {
+        // const rope = try allocator.create(Rope);
+        // rope.* = try Rope.init(allocator, "");
+        // try rope.append(content);
+        // const rope = try allocator.create(BufferGap);
+        // rope.* = try BufferGap.init(allocator, "");
+        // try rope.append(content);
+        const content = try allocator.create(Content);
+        content.* = try Content.init(allocator, "");
+        try content.append(init_content);
+
         const lines = try allocator.create(Lines);
         lines.* = Lines.init(allocator);
         const cursor = try allocator.create(Cursor);
         const xy: XY = XY{ .x = 0, .y = 0 };
         cursor.* = Cursor{ .lines = lines, .xy = xy };
-        const rope_l = std.ArrayList(u8).init(allocator);
+
         const theme = try allocator.create(Theme);
+
+        const content_cache = try allocator.dupe(u8, init_content);
 
         var buffer: Buffer = .{
             .allocator = allocator,
-            .rope = rope,
+            .content = content,
             .cursor = cursor,
-            .rope_l = rope_l,
+            .content_cache = content_cache,
             .lines = lines,
             .syntax = undefined,
             .theme = theme,
@@ -181,7 +198,9 @@ pub const Buffer = struct {
 
     // TODO should have a cache
     fn setSyntax(self: *Buffer) !void {
-        const syntax_ = try syntax.create_file_type(self.allocator, try self.rope.getValue(), "zig");
+        const content = try self.content.getValue();
+        defer self.allocator.free(content);
+        const syntax_ = try syntax.create_file_type(self.allocator, content, "zig");
         self.syntax = syntax_;
     }
 
@@ -189,12 +208,11 @@ pub const Buffer = struct {
         self.allocator.destroy(self.cursor);
         self.lines.deinit();
         self.allocator.destroy(self.lines);
-        self.rope.deinit();
-        self.rope_l.deinit();
-        self.allocator.destroy(self.rope);
+        self.content.deinit();
+        self.allocator.destroy(self.content);
         self.syntax.destroy();
-        self.allocator.destroy(self.syntax);
         self.allocator.destroy(self.theme);
+        self.allocator.free(self.content_cache);
     }
 
     pub fn draw_(self: *Buffer, vx: Vaxis, win: vaxis.Window) !void {
@@ -205,13 +223,20 @@ pub const Buffer = struct {
 
     pub fn draw(self: *Buffer, vx: Vaxis, win: vaxis.Window) !void {
         _ = vx;
-        const rope_content = try self.rope.getValue();
-        defer self.allocator.free(rope_content);
-        // This can't be performant at all
-        self.rope_l.clearAndFree();
-        try self.rope_l.appendSlice(rope_content);
+        const current_content = try self.content.getValue();
+        // NOTE if I free this I get a panic, if I don't I get a leak.
+        defer self.allocator.free(current_content);
 
-        const content = self.rope_l.items;
+        // TODO this should be a function to handle content cache
+        if (!std.mem.eql(u8, current_content, self.content_cache)) {
+            const new_cache = try self.allocator.realloc(self.content_cache, current_content.len);
+            @memcpy(new_cache, current_content);
+            self.content_cache = new_cache;
+        }
+
+        const content = self.content_cache;
+
+        // const content = self.rope_l.items;
 
         // var msg_iter = vx.unicode.graphemeIterator(content);
 
@@ -271,7 +296,6 @@ pub const Buffer = struct {
             // cursor?
         };
 
-        // _ = renderer;
         try self.syntax.render(&renderer, Renderer.cb, null);
 
         // NOTE: temporarily disabled just to see what happens when trying to write directly with the tokens
@@ -300,7 +324,7 @@ pub const Buffer = struct {
                     // To delete properly I have to to go from .{x, y} to pos, which I can't do right now.
                     // try self.rope.deleteLast();
                     // TODO don't try to go on new lines!
-                    try self.rope.delete(self.cursor.pos - 1, self.cursor.pos);
+                    try self.content.delete(self.cursor.pos - 1, self.cursor.pos);
                     self.cursor.moveLeft();
                 } else if (key.matches(Key.delete, .{}) or key.matches('d', .{ .ctrl = true })) {
                     // self.deleteAfterCursor();
@@ -334,14 +358,14 @@ pub const Buffer = struct {
                         .{},
                     );
                     defer file.close();
-                    const content = try self.rope.getValue();
+                    const content = try self.content.getValue();
                     defer self.allocator.free(content);
                     _ = try file.writeAll(content);
                 } else if (key.matches(Key.enter, .{})) {
-                    try self.rope.append("\n");
+                    try self.content.append("\n");
                     self.cursor.toNewLine();
                 } else if (key.text) |text| {
-                    try self.rope.append(text);
+                    try self.content.append(text);
                     self.cursor.moveRight();
                 }
             },

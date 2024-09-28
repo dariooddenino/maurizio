@@ -86,6 +86,7 @@ pub const Renderer = struct {
     }
 
     fn writeStyled(ctx: *@This(), text: []const u8, style: Theme.Style) !void {
+        // _ = style;
         const style_ = .{
             .fg = Color.rgbFromUint(style.fg orelse 3),
         };

@@ -8,7 +8,7 @@
       "type": "cppdbg",
       "request": "launch",
       "name": "Debug",
-      "program": "${workspaceRoot}/zig-out/bin/test",
+      "program": "${workspaceRoot}/zig-out/bin/maurizio",
       "stopAtEntry": false,
       "args": [],
       "cwd": "${workspaceRoot}",
