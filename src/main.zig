@@ -76,7 +76,9 @@ const App = struct {
         };
     }
 
-    pub fn deinit(self: *App) void {
+    pub fn deinit(self: *App) !void {
+        // TODO assuming that this was black to begin with...
+        try self.vx.setTerminalBackgroundColor(self.tty.anyWriter(), .{ 0, 0, 0 });
         self.vx.deinit(self.allocator, self.tty.anyWriter());
         self.tty.deinit();
         self.buffer.deinit();
@@ -183,6 +185,7 @@ pub fn main() !void {
     if (res.args.help != 0)
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
 
+    // TODO this should only impact content, not the whole app starting.
     if (res.positionals.len > 0) {
         for (res.positionals) |arg| {
             const file = try std.fs.cwd().openFile(arg, .{ .mode = .read_only });
@@ -190,17 +193,17 @@ pub fn main() !void {
             const content = try file.readToEndAlloc(allocator, std.math.maxInt(u32));
             defer allocator.free(content);
             var app = try App.init(allocator, content);
-            defer app.deinit();
 
             try app.run();
+            try app.deinit();
         }
     } else {
         const content: []const u8 = "pub const Foo = union(enum) {\n  foo: usize,\n};\n";
         // Initialize our application
         var app = try App.init(allocator, content);
-        defer app.deinit();
 
         // Run the application
         try app.run();
+        try app.deinit();
     }
 }
