@@ -228,7 +228,7 @@ pub fn main() !void {
             try app.deinit();
         }
     } else {
-        const content: []const u8 = "pub const Foo = union(enum) {\n  foo: usize,\n};\n";
+        const content: []const u8 = "";
         // Initialize our application
         var app = try App.init(allocator, content);
 

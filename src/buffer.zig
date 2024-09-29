@@ -249,6 +249,14 @@ pub const Buffer = struct {
         // const start_row: u32 = @intCast(pos.y);
         // const start_column: u32 = @intCast(pos.x);
 
+        const limit_lines = win.screen.height;
+
+        const start_line: usize = 0;
+        const current_line: usize = 0; // @max(1, start_line);
+        const end_line = start_line + limit_lines;
+        // const center = (win_height - 1) / 2;
+        // const range_size =
+
         // Naive range for now
         // const range: ?syntax.Range = .{
         //     .start_point = .{ .row = start_row, .column = start_column },
@@ -269,10 +277,25 @@ pub const Buffer = struct {
             .content = content,
             .syntax = self.syntax,
             .style_cache = self.style_cache,
+            .start_line = start_line,
+            .end_line = end_line,
+            .current_line = current_line,
             // cursor?
         };
 
         try self.syntax.render(&renderer, Renderer.cb, null);
+
+        // TODO not sure of what this was for
+        // while (renderer.current_line < end_line) {
+        //     if (std.mem.indexOfPos(u8, content, renderer.last_pos, "\n")) |pos| {
+        //         // try writer :/
+        //         renderer.current_line += 1;
+        //         renderer.last_pos = pos + 1;
+        //     } else {
+        //         // write
+        //         break;
+        //     }
+        // }
 
         // index += 1;
         // I don't thiColor'm using this

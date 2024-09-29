@@ -41,6 +41,7 @@ pub const fallbacks: []const FallBack = &[_]FallBack{
     .{ .ts = "field", .tm = "variable" },
 };
 
+/// TODO this in zat exposes functions to set/unset styles
 pub const Renderer = struct {
     win: vaxis.Window,
     theme: *const Theme,
@@ -50,6 +51,9 @@ pub const Renderer = struct {
     last_pos: usize = 0,
     col: usize = 0,
     row: usize = 0,
+    current_line: usize,
+    start_line: usize,
+    end_line: usize,
 
     /// Find a scope in the fallback list
     fn findScopeFallback(scope: []const u8) ?[]const u8 {
@@ -87,6 +91,7 @@ pub const Renderer = struct {
         } else ret: {
             const sty = findScopeStyle(theme, scope) orelse null;
             // skipping cache since it's broken
+            // TODO: I think I need to cache the style for each theme?
             // try style_cache.put(id, sty);
             break :ret sty;
         };
@@ -100,6 +105,8 @@ pub const Renderer = struct {
     }
 
     fn writeStyled(ctx: *@This(), text: []const u8, style: Theme.Style) !void {
+        if (!(ctx.start_line <= ctx.current_line and ctx.current_line <= ctx.end_line)) return;
+
         const style_ = .{
             .fg = Color.rgbFromUint(style.fg orelse 3),
         };
@@ -121,7 +128,9 @@ pub const Renderer = struct {
 
         while (std.mem.indexOf(u8, text, "\n")) |pos| {
             try ctx.writeStyled(text[0 .. pos + 1], style);
+            // TODO can I merge these into one?
             ctx.row += 1;
+            ctx.current_line += 1;
             ctx.col = 0;
             text = text[pos + 1 ..];
         }
@@ -153,8 +162,5 @@ pub const Renderer = struct {
         }
 
         ctx.last_pos = range.end_byte;
-
-        // TODO current line check?
-
     }
 };

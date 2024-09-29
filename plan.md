@@ -1,3 +1,7 @@
+# In progress
+Loading the file doesn't render the first line.
+Trying to render a slice of the file.
+
 # Core features for editor
 - [ ] fix style cache id not working
 - [x] theme should be per app, not per buffer (also manage bg there and avoid passing vx and tty to buffer?)
