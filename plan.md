@@ -1,7 +1,8 @@
 # Core features for editor
+- [ ] fix style cache id not working
 - [x] theme should be per app, not per buffer (also manage bg there and avoid passing vx and tty to buffer?)
 - [ ] set terminal back to how it was before, on exit and on crash
-- [ ] style cache handled in a more sane way
+- [x] changing theme should update the text color as well
 - [ ] cursor position is already stored in vaxis
 - [ ] handle cursor movement
 - [ ] allow content editing

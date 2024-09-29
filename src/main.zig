@@ -148,6 +148,14 @@ const App = struct {
                     self.should_quit = true;
                 } else if (key.matches('l', .{ .ctrl = true })) {
                     self.vx.queueRefresh();
+                } else if (key.matches('1', .{})) {
+                    const theme = try getTheme("default");
+                    self.theme.* = theme;
+                    try App.applyTheme(self.vx, self.tty, self.theme);
+                } else if (key.matches('2', .{})) {
+                    const theme = try getTheme("rose-pine-dawn");
+                    self.theme.* = theme;
+                    try App.applyTheme(self.vx, self.tty, self.theme);
                 } else {
                     try self.buffer.handleKey(.{ .key_press = key });
                 }

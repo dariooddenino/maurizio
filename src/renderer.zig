@@ -86,7 +86,8 @@ pub const Renderer = struct {
             break :ret sty;
         } else ret: {
             const sty = findScopeStyle(theme, scope) orelse null;
-            try style_cache.put(id, sty);
+            // skipping cache since it's broken
+            // try style_cache.put(id, sty);
             break :ret sty;
         };
     }
