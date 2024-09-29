@@ -144,12 +144,11 @@ pub const Buffer = struct {
     vx: *Vaxis,
     tty: Tty,
 
-    pub fn initEmpty(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache) !Buffer {
-        return Buffer.init(allocator, vx, tty, style_cache, "");
+    pub fn initEmpty(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache, theme: *Theme) !Buffer {
+        return Buffer.init(allocator, vx, tty, style_cache, theme, "");
     }
 
-    // TODO I guess this should init with a theme?
-    pub fn init(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache, init_content: []const u8) !Buffer {
+    pub fn init(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache, theme: *Theme, init_content: []const u8) !Buffer {
         const content = try allocator.create(Content);
         content.* = try Content.init(allocator, "");
         try content.append(init_content);
@@ -159,8 +158,6 @@ pub const Buffer = struct {
         const cursor = try allocator.create(Cursor);
         const xy: XY = XY{ .x = 0, .y = 0 };
         cursor.* = Cursor{ .lines = lines, .xy = xy };
-
-        const theme = try allocator.create(Theme);
 
         const content_cache = try allocator.dupe(u8, init_content);
 
@@ -177,24 +174,11 @@ pub const Buffer = struct {
             .tty = tty,
         };
 
-        try buffer.setTheme("rose-pine-dawn");
         try vx.setTerminalBackgroundColor(tty.anyWriter(), Color.rgbFromUint(theme.editor.bg orelse 0).rgb);
 
         try Buffer.setSyntax(&buffer);
 
         return buffer;
-    }
-
-    fn setTheme(self: *Buffer, m_theme: ?[]const u8) !void {
-        const theme = m_theme orelse "default";
-
-        for (themes.themes) |th| {
-            if (std.mem.eql(u8, th.name, theme)) {
-                self.theme.* = th;
-                return;
-            }
-        }
-        unreachable;
     }
 
     // TODO should have a cache

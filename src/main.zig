@@ -47,20 +47,35 @@ const App = struct {
     vx: *vaxis.Vaxis,
     buffer: *Buffer,
     style_cache: *StyleCache,
+    theme: *Theme,
+
+    fn getTheme(m_theme: ?[]const u8) !Theme {
+        const theme = m_theme orelse "default";
+
+        for (themes.themes) |th| {
+            if (std.mem.eql(u8, th.name, theme)) {
+                return th;
+            }
+        }
+        unreachable;
+    }
 
     pub fn init(allocator: std.mem.Allocator, content: ?[]const u8) !App {
         const vx = try allocator.create(vaxis.Vaxis);
         vx.* = try vaxis.init(allocator, .{});
-        const tty = try vaxis.Tty.init();        
+        const tty = try vaxis.Tty.init();
 
         const style_cache = try allocator.create(StyleCache);
         style_cache.* = StyleCache.init(allocator);
 
+        const theme = try allocator.create(Theme);
+        theme.* = try getTheme("rose-pine-dawn");
+
         const buffer = try allocator.create(Buffer);
         if (content) |c| {
-            buffer.* = try Buffer.init(allocator, vx, tty, style_cache, c);
+            buffer.* = try Buffer.init(allocator, vx, tty, style_cache, theme, c);
         } else {
-            buffer.* = try Buffer.initEmpty(allocator, vx, tty, style_cache);
+            buffer.* = try Buffer.initEmpty(allocator, vx, tty, style_cache, theme);
         }
 
         // vx.caps.kitty_graphics = true;
@@ -73,6 +88,7 @@ const App = struct {
             .vx = vx,
             .buffer = buffer,
             .style_cache = style_cache,
+            .theme = theme,
         };
     }
 
@@ -83,7 +99,7 @@ const App = struct {
         self.tty.deinit();
         self.buffer.deinit();
         self.allocator.destroy(self.buffer);
-        self.style_cache.deinit();  
+        self.style_cache.deinit();
         self.allocator.destroy(self.style_cache);
         self.allocator.destroy(self.vx);
     }
