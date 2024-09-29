@@ -60,6 +60,12 @@ const App = struct {
         unreachable;
     }
 
+    // TODO I don't like this
+    fn applyTheme(vx: *vaxis.Vaxis, tty: vaxis.Tty, theme: *Theme) !void {
+        try vx.setTerminalBackgroundColor(tty.anyWriter(), Color.rgbFromUint(theme.editor.bg orelse 0).rgb);
+        // Possibly notify of change?
+    }
+
     pub fn init(allocator: std.mem.Allocator, content: ?[]const u8) !App {
         const vx = try allocator.create(vaxis.Vaxis);
         vx.* = try vaxis.init(allocator, .{});
@@ -70,17 +76,17 @@ const App = struct {
 
         const theme = try allocator.create(Theme);
         theme.* = try getTheme("rose-pine-dawn");
+        try App.applyTheme(vx, tty, theme);
 
         const buffer = try allocator.create(Buffer);
         if (content) |c| {
-            buffer.* = try Buffer.init(allocator, vx, tty, style_cache, theme, c);
+            buffer.* = try Buffer.init(allocator, vx, style_cache, theme, c);
         } else {
-            buffer.* = try Buffer.initEmpty(allocator, vx, tty, style_cache, theme);
+            buffer.* = try Buffer.initEmpty(allocator, vx, style_cache, theme);
         }
 
-        // vx.caps.kitty_graphics = true;
-        // vx.caps.rgb = true;
         vx.sgr = .legacy;
+
         return .{
             .allocator = allocator,
             .should_quit = false,

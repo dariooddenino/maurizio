@@ -5,7 +5,6 @@ const Color = Cell.Color;
 const Rope = @import("rope.zig").Rope;
 const Key = vaxis.Key;
 const Vaxis = vaxis.Vaxis;
-const Tty = vaxis.Tty;
 const Event = @import("main.zig").Event;
 const Renderer = @import("renderer.zig").Renderer;
 const BufferGap = @import("buffergap.zig").BufferGap;
@@ -142,13 +141,12 @@ pub const Buffer = struct {
     syntax: *syntax,
     theme: *Theme,
     vx: *Vaxis,
-    tty: Tty,
 
-    pub fn initEmpty(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache, theme: *Theme) !Buffer {
-        return Buffer.init(allocator, vx, tty, style_cache, theme, "");
+    pub fn initEmpty(allocator: std.mem.Allocator, vx: *Vaxis, style_cache: *StyleCache, theme: *Theme) !Buffer {
+        return Buffer.init(allocator, vx, style_cache, theme, "");
     }
 
-    pub fn init(allocator: std.mem.Allocator, vx: *Vaxis, tty: Tty, style_cache: *StyleCache, theme: *Theme, init_content: []const u8) !Buffer {
+    pub fn init(allocator: std.mem.Allocator, vx: *Vaxis, style_cache: *StyleCache, theme: *Theme, init_content: []const u8) !Buffer {
         const content = try allocator.create(Content);
         content.* = try Content.init(allocator, "");
         try content.append(init_content);
@@ -171,10 +169,7 @@ pub const Buffer = struct {
             .syntax = undefined,
             .theme = theme,
             .vx = vx,
-            .tty = tty,
         };
-
-        try vx.setTerminalBackgroundColor(tty.anyWriter(), Color.rgbFromUint(theme.editor.bg orelse 0).rgb);
 
         try Buffer.setSyntax(&buffer);
 

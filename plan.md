@@ -1,5 +1,5 @@
 # Core features for editor
-- [ ] theme should be per app, not per buffer (also manage bg there and avoid passing vx and tty to buffer?)
+- [x] theme should be per app, not per buffer (also manage bg there and avoid passing vx and tty to buffer?)
 - [ ] set terminal back to how it was before, on exit and on crash
 - [ ] style cache handled in a more sane way
 - [ ] cursor position is already stored in vaxis
