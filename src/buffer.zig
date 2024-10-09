@@ -269,7 +269,7 @@ pub const Buffer = struct {
 
         // std.debug.print("RANGE: {any}\n", .{range});
 
-        // win.clear();
+        win.clear();
 
         var renderer: Renderer = .{
             .win = win,

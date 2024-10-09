@@ -50,6 +50,7 @@ pub const Renderer = struct {
     style_cache: *StyleCache,
     last_pos: usize = 0,
     col: usize = 0,
+    // NOTE: for some reason setting row to 1 makes the first line print...
     row: usize = 0,
     current_line: usize,
     start_line: usize,
@@ -140,6 +141,7 @@ pub const Renderer = struct {
     // TODO this doesn't set the background color back...
 
     pub fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
+        // _ = idx;
         if (idx > 0) return;
 
         if (ctx.last_pos < range.start_byte) {

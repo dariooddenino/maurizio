@@ -10,21 +10,23 @@
       "name": "Debug",
       "program": "${workspaceRoot}/zig-out/bin/maurizio",
       "stopAtEntry": false,
-      "args": [],
+      "args": ["--", "${workspaceRoot}/src/rope.zig"],
       "cwd": "${workspaceRoot}",
       "preLaunchTask": "build",
-      // "setupCommands": [
-      //   {
-      //     "description": "Enable pretty-printing for gdb",
-      //     "text": "-enable-pretty-printing",
-      //     "ignoreFailures": true
-      //   },
+      "externalConsole": true,
+      // "MIMode": "lldb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
       // {
       //   "description": "Connect to valgrind",
       //   "text": "${command:valgrind-task-integration.valgrindGdbArg}",
       //   "ignoreFailures": true
       // }
-      // ]
+      ]
     }
   ]
 }
