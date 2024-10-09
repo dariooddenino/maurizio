@@ -55,6 +55,7 @@ pub const Renderer = struct {
     current_line: usize,
     start_line: usize,
     end_line: usize,
+    file: std.fs.File, // debug file
 
     /// Find a scope in the fallback list
     fn findScopeFallback(scope: []const u8) ?[]const u8 {
@@ -141,9 +142,13 @@ pub const Renderer = struct {
     // TODO this doesn't set the background color back...
 
     pub fn cb(ctx: *@This(), range: syntax.Range, scope: []const u8, id: u32, idx: usize, _: *const syntax.Node) error{Stop}!void {
-        // _ = idx;
+        // Apparently this is always 0. what is it for?
         if (idx > 0) return;
 
+        std.fmt.format(ctx.file.writer(), "last_pos {}, start_byte {}, end_byte {}\n", .{ ctx.last_pos, range.start_byte, range.end_byte }) catch unreachable;
+
+        // The ranges are tiny, possibly covering every span of homogenous styling
+        // std.fmt.format(ctx.file.writer(), "range {}\n", .{range}) catch unreachable;
         if (ctx.last_pos < range.start_byte) {
             const before_segment = ctx.content[ctx.last_pos..range.start_byte];
             ctx.writeLinesStyled(before_segment, ctx.theme.editor) catch return error.Stop;

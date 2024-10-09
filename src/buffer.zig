@@ -141,12 +141,13 @@ pub const Buffer = struct {
     syntax: *syntax,
     theme: *Theme,
     vx: *Vaxis,
+    file: std.fs.File, // debug file
 
-    pub fn initEmpty(allocator: std.mem.Allocator, vx: *Vaxis, style_cache: *StyleCache, theme: *Theme) !Buffer {
-        return Buffer.init(allocator, vx, style_cache, theme, "");
+    pub fn initEmpty(allocator: std.mem.Allocator, vx: *Vaxis, style_cache: *StyleCache, theme: *Theme, file: std.fs.File) !Buffer {
+        return Buffer.init(allocator, vx, style_cache, theme, file, "");
     }
 
-    pub fn init(allocator: std.mem.Allocator, vx: *Vaxis, style_cache: *StyleCache, theme: *Theme, init_content: []const u8) !Buffer {
+    pub fn init(allocator: std.mem.Allocator, vx: *Vaxis, style_cache: *StyleCache, theme: *Theme, file: std.fs.File, init_content: []const u8) !Buffer {
         const content = try allocator.create(Content);
         content.* = try Content.init(allocator, "");
         try content.append(init_content);
@@ -169,6 +170,7 @@ pub const Buffer = struct {
             .syntax = undefined,
             .theme = theme,
             .vx = vx,
+            .file = file,
         };
 
         try Buffer.setSyntax(&buffer);
@@ -251,8 +253,8 @@ pub const Buffer = struct {
 
         const limit_lines = win.screen.height;
 
-        const start_line: usize = 0;
-        const current_line: usize = 0; // @max(1, start_line);
+        const start_line: usize = 5;
+        const current_line: usize = 5; // @max(1, start_line);
         const end_line = start_line + limit_lines;
         // const center = (win_height - 1) / 2;
         // const range_size =
@@ -269,8 +271,6 @@ pub const Buffer = struct {
 
         // std.debug.print("RANGE: {any}\n", .{range});
 
-        win.clear();
-
         var renderer: Renderer = .{
             .win = win,
             .theme = self.theme,
@@ -280,6 +280,7 @@ pub const Buffer = struct {
             .start_line = start_line,
             .end_line = end_line,
             .current_line = current_line,
+            .file = self.file,
             // cursor?
         };
 

@@ -15,18 +15,18 @@
       "preLaunchTask": "build",
       "externalConsole": true,
       // "MIMode": "lldb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
-        },
+      // "setupCommands": [
+      //   {
+      //     "description": "Enable pretty-printing for gdb",
+      //     "text": "-enable-pretty-printing",
+      //     "ignoreFailures": true
+      //   },
       // {
       //   "description": "Connect to valgrind",
       //   "text": "${command:valgrind-task-integration.valgrindGdbArg}",
       //   "ignoreFailures": true
       // }
-      ]
+      // ]
     }
   ]
 }

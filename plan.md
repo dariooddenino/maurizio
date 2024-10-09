@@ -1,3 +1,8 @@
+# Dev UX improvements
+- [ ] be able to print like std.debug.print but to the debug file
+- [ ] install a better tail to be able to scroll/search
+- [ ] Can I get debugging to work from windows?
+
 # In progress
 Loading the file doesn't render the first line.
 Trying to render a slice of the file.

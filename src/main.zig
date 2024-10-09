@@ -48,6 +48,7 @@ const App = struct {
     buffer: *Buffer,
     style_cache: *StyleCache,
     theme: *Theme,
+    file: std.fs.File,
 
     fn getTheme(m_theme: ?[]const u8) !Theme {
         const theme = m_theme orelse "default";
@@ -78,11 +79,13 @@ const App = struct {
         theme.* = try getTheme("rose-pine-dawn");
         try App.applyTheme(vx, tty, theme);
 
+        const file = try std.fs.cwd().createFile("debug.txt", .{});
+
         const buffer = try allocator.create(Buffer);
         if (content) |c| {
-            buffer.* = try Buffer.init(allocator, vx, style_cache, theme, c);
+            buffer.* = try Buffer.init(allocator, vx, style_cache, theme, file, c);
         } else {
-            buffer.* = try Buffer.initEmpty(allocator, vx, style_cache, theme);
+            buffer.* = try Buffer.initEmpty(allocator, vx, style_cache, theme, file);
         }
 
         vx.sgr = .legacy;
@@ -95,10 +98,12 @@ const App = struct {
             .buffer = buffer,
             .style_cache = style_cache,
             .theme = theme,
+            .file = file,
         };
     }
 
     pub fn deinit(self: *App) !void {
+        self.file.close();
         // TODO assuming that this was black to begin with...
         try self.vx.setTerminalBackgroundColor(self.tty.anyWriter(), .{ 0, 0, 0 });
         self.vx.deinit(self.allocator, self.tty.anyWriter());
