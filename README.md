@@ -4,4 +4,4 @@
  > ^ <  ~ M A U R I Z I O
 ```
 
-An amazing text editor
+An amazing text editor!
